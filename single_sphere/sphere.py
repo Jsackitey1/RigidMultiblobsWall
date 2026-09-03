@@ -81,7 +81,7 @@ def plot_distribution(locationsFile, analytical_x, analytical_y, n_steps):
 	# the hist function returned a 3rd item and I'm not sure how best to handle it yet
 	# so there is a throwaway variable trash
 	numBars = int(max_height // (n_steps**(-1/5.)))
-	binValue, xBinLocations, trash = plt.hist(heights, numBars, normed=1, facecolor='green', alpha=0.75)
+	binValue, xBinLocations, trash = plt.hist(heights, numBars, density=True, facecolor='green', alpha=0.75)
 	plt.plot(analytical_x, analytical_y, 'b-', linewidth=1.5)
 	
 	# add error bars to histogram	Nx = # samples in bin	h = bin width

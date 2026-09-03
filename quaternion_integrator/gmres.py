@@ -5,8 +5,15 @@ try:
   from scipy.sparse.linalg.isolve.utils import make_system
   from scipy.sparse.linalg.isolve import _iterative
 except:
-  from scipy.sparse.linalg._isolve.utils import make_system
-  from scipy.sparse.linalg._isolve import _iterative
+  try:
+    from scipy.sparse.linalg._isolve.utils import make_system
+    from scipy.sparse.linalg._isolve import _iterative
+  except:
+    try:
+      from scipy.sparse.linalg._isolve.utils import make_system
+    except:
+      from scipy.sparse.linalg._interface import make_system
+    _iterative = None
 from scipy._lib._util import _aligned_zeros
 import numpy as np
 import scipy
@@ -55,6 +62,8 @@ def direct_gmres(A, b, verbose, **kwargs):
     return out[0], out[1], mydict['resnorms']
 
 def presid_gmres(A, b, verbose, x0=None, tol=1e-05, restart=None, maxiter=None, M=None, **kwargs):
+    if _iterative is None:
+        return direct_gmres(A, b, verbose, x0=x0, tol=tol, restart=restart, maxiter=maxiter, M=M, **kwargs)
     callback = gmres_counter(verbose)
 
     A, M, x, b, postprocess = make_system(A, M, x0, b)

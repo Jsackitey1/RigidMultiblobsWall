@@ -35,6 +35,9 @@ class StreamToLogger(object):
     for line in buf.rstrip().splitlines():
       self.logger.log(self.log_level, line.rstrip())
 
+  def flush(self):
+    pass
+
 
 class Tee(object):
   def __init__(self, *files):
@@ -119,7 +122,7 @@ def plot_time_dependent_msd(msd_statistics, ind, figure, color=None, symbol=None
   if not data_name:
      data_name = "MSD-component-%s-%s.txt" % (ind[0], ind[1])
   if write_data:
-    np.set_printoptions(threshold=np.nan)
+    np.set_printoptions(threshold=sys.maxsize)
     with open(os.path.join('.', 'data', data_name), data_write_type) as f:
       f.write('  \n')
   if not num_err_bars:

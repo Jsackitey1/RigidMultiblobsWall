@@ -23,10 +23,10 @@ import sys
 sys.path.append('..')
 import time
 
-from fluids import mobility as mb
+from mobility import mobility as mb
 from quaternion_integrator.quaternion import Quaternion
 from quaternion_integrator.quaternion_integrator import QuaternionIntegrator
-from . import sphere as sph
+import sphere as sph
 from general_application_utils import log_time_progress
 from general_application_utils import static_var
 from general_application_utils import MSDStatistics
@@ -94,7 +94,7 @@ def calc_sphere_msd_from_equilibrium(initial_orientation,
   progress_logger = logging.getLogger('Progress Logger')
   burn_in = int(end_time*4./dt)
   rot_msd_list = []
-  print_increment = n_steps/20
+  print_increment = max(1, int(n_steps/20))
   dim = 6
   progress_logger.info('Starting runs...')
   start_time = time.time()
@@ -270,10 +270,10 @@ def bin_sphere_height(sample, height_histogram, bin_width):
     print('Index %d exceeds histogram length' % idx)
 
 
-def plot_height_histograms(buckets, height_histograms, labels):
+def plot_height_histograms(buckets, height_histograms, labels, bin_width):
   ''' Plot buckets v. heights of eq and run pdf and save the figure.'''
   pyplot.figure()
-  start_ind = 0.4/bin_width
+  start_ind = int(0.4/bin_width)
   for k in range(len(height_histograms)):
     pyplot.plot(buckets[start_ind:], height_histograms[k][start_ind:],
                 label=labels[k])
@@ -367,7 +367,7 @@ if __name__ == '__main__':
                                [average_mob_and_friction[0], average_mob_and_friction[1]],
                                n_steps)
 
-  plot_height_histograms(buckets, height_histograms, labels)
+  plot_height_histograms(buckets, height_histograms, labels, bin_width)
   print("Mobility is ", average_mob_and_friction[0])
   print("Average friction is ", average_mob_and_friction[1])
   print("1/Friction is %f" % (1./average_mob_and_friction[1]))
