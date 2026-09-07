@@ -12,6 +12,7 @@ blob_blob_force_implementation           python
 dt                                       0.1
 n_steps                                  10
 n_save                                   1
+save_clones                              one_file
 
 # Set fluid viscosity (eta), gravity (g) and blob radius
 eta                                      1.0 
