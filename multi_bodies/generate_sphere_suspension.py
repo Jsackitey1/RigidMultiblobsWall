@@ -325,7 +325,7 @@ def main():
   parser.add_argument('--periodic', action='store_true', default=None,
                       help="Enable periodic boundary condition wrapping in x and y")
   parser.add_argument('--output-clones', type=str, default=None,
-                      help="Path to save the generated *.clones file (default: data/generated_spheres.clones)")
+                      help="Path to save the generated *.clones file (default: Structures/generated_spheres.clones)")
   parser.add_argument('--plot-image', type=str, default=None,
                       help="Path to save a visual verification PNG plot (default: data/spheres_plot.png)")
   parser.add_argument('--random-quaternions', action='store_true', default=None,
@@ -416,7 +416,7 @@ def main():
     periodic = file_opts['periodic'].lower() in ['true', '1', 'yes']
 
   # Resolve outputs
-  output_clones = args.output_clones or file_opts.get('output_clones') or 'data/generated_spheres.clones'
+  output_clones = args.output_clones or file_opts.get('output_clones') or 'Structures/generated_spheres.clones'
   plot_image = args.plot_image or file_opts.get('plot_image') or 'data/spheres_plot.png'
   vertex_file = args.vertex_file or file_opts.get('vertex_file') or 'Structures/shell_N_12_Rg_1.vertex'
   

@@ -24,7 +24,7 @@ safety_gap                               0.05
 periodic                                 False
 
 # Output file destinations
-output_clones                            data/generated_spheres.clones
+output_clones                            Structures/generated_spheres.clones
 plot_image                               data/spheres_plot.png
 
 # Reference vertex template file
