@@ -328,7 +328,7 @@ def plot_suspension(dim, bounds, positions, radius, achieved_fraction, min_d, mi
     xmin, xmax, ymin, ymax, zmin, zmax = bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]
     
     # Draw 3D scatter colored by z-height
-    p = ax.scatter(positions[:, 0], positions[:, 1], positions[:, 2],
+    p = ax.scatter(xs=positions[:, 0], ys=positions[:, 1], zs=positions[:, 2],
                    c=positions[:, 2], cmap='viridis', s=60 * (radius**2),
                    edgecolors='k', alpha=0.85)
     
