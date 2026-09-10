@@ -282,11 +282,35 @@ def plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_
   print(f"[+] Visual plot saved to: {output_plot}")
 
 
+def read_suspension_input_file(filepath):
+  '''
+  Read key-value options from a *.dat input file matching RigidMultiblobsWall style.
+  '''
+  options = {}
+  if not os.path.exists(filepath):
+    sys.exit(f"Error: Input file not found: {filepath}")
+    
+  with open(filepath, 'r') as f:
+    for line in f:
+      if '#' in line:
+        line, _ = line.split('#', 1)
+      line = line.strip()
+      if line != '':
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+          options[parts[0]] = parts[1].strip()
+        elif len(parts) == 1:
+          options[parts[0]] = ''
+  return options
+
+
 def main():
   parser = argparse.ArgumentParser(
     description="Generate non-overlapping 2D sphere suspensions for RigidMultiblobsWall."
   )
-  parser.add_argument('--box', nargs='+', type=float, required=True,
+  parser.add_argument('--input-file', type=str, default=None,
+                      help="Path to a *.dat configuration file (e.g. inputfile_suspension.dat)")
+  parser.add_argument('--box', nargs='+', type=float, default=None,
                       help="Bounding box: 'xmin xmax ymin ymax' or 'Lx Ly'")
   parser.add_argument('--z-height', type=float, default=None,
                       help="Fixed height z above floor wall (default: 2.0 * radius)")
@@ -294,60 +318,138 @@ def main():
                       help="Target 2D area fraction (e.g. 0.25)")
   parser.add_argument('--num-bodies', '-N', dest='num_bodies', type=int, default=None,
                       help="Explicit number of spheres to place")
-  parser.add_argument('--radius', '-R', type=float, default=1.0,
+  parser.add_argument('--radius', '-R', type=float, default=None,
                       help="Sphere hydrodynamic/geometric radius (default: 1.0)")
-  parser.add_argument('--safety-gap', type=float, default=0.05,
+  parser.add_argument('--safety-gap', type=float, default=None,
                       help="Safety gap buffer fraction above 2R (default: 0.05 -> d_min = 2.1R)")
-  parser.add_argument('--periodic', action='store_true',
+  parser.add_argument('--periodic', action='store_true', default=None,
                       help="Enable periodic boundary condition wrapping in x and y")
-  parser.add_argument('--output-clones', type=str, default='data/generated_spheres.clones',
+  parser.add_argument('--output-clones', type=str, default=None,
                       help="Path to save the generated *.clones file (default: data/generated_spheres.clones)")
-  parser.add_argument('--plot-image', type=str, default='data/spheres_plot.png',
+  parser.add_argument('--plot-image', type=str, default=None,
                       help="Path to save a visual verification PNG plot (default: data/spheres_plot.png)")
-  parser.add_argument('--random-quaternions', action='store_true',
+  parser.add_argument('--random-quaternions', action='store_true', default=None,
                       help="Randomize 3D orientations (default: identity quaternion 1,0,0,0)")
   parser.add_argument('--seed', type=int, default=None,
                       help="Random number generator seed")
-  parser.add_argument('--vertex-file', type=str, default='Structures/shell_N_12_Rg_1.vertex',
+  parser.add_argument('--vertex-file', type=str, default=None,
                       help="Reference vertex file to recommend in inputfile snippet")
 
   args = parser.parse_args()
 
-  # Parse box
-  if len(args.box) == 2:
-    bounds = [0.0, args.box[0], 0.0, args.box[1]]
-  elif len(args.box) == 4:
-    bounds = [args.box[0], args.box[1], args.box[2], args.box[3]]
+  # Load options from input file if provided
+  file_opts = {}
+  if args.input_file is not None:
+    file_opts = read_suspension_input_file(args.input_file)
+    print(f"[+] Loaded configuration from: {args.input_file}")
+
+  # Resolve box
+  box_val = args.box
+  if box_val is None and 'box' in file_opts:
+    box_val = [float(x) for x in file_opts['box'].split()]
+  elif box_val is None and 'periodic_length' in file_opts:
+    p_len = [float(x) for x in file_opts['periodic_length'].split()]
+    box_val = [0.0, p_len[0], 0.0, p_len[1]]
+
+  if box_val is None:
+    sys.exit("Error: Must specify domain boundary via --box or 'box' in input file.")
+
+  if len(box_val) == 2:
+    bounds = [0.0, box_val[0], 0.0, box_val[1]]
+  elif len(box_val) == 4:
+    bounds = [box_val[0], box_val[1], box_val[2], box_val[3]]
   else:
-    sys.exit("Error: --box must provide 2 numbers (Lx Ly) or 4 numbers (xmin xmax ymin ymax).")
+    sys.exit("Error: box must provide 2 numbers (Lx Ly) or 4 numbers (xmin xmax ymin ymax).")
 
-  z_fixed = args.z_height if args.z_height is not None else 2.0 * args.radius
-  if z_fixed < args.radius:
-    print(f"[!] Warning: z_height ({z_fixed}) is less than sphere radius ({args.radius}). Floor wall is at z=0.")
+  # Resolve radius
+  radius = args.radius
+  if radius is None:
+    if 'radius' in file_opts:
+      radius = float(file_opts['radius'])
+    elif 'sphere_radius' in file_opts:
+      radius = float(file_opts['sphere_radius'])
+    elif 'blob_radius' in file_opts:
+      radius = float(file_opts['blob_radius'])
+    else:
+      radius = 1.0
 
-  if args.num_bodies is None and args.fraction is None:
-    sys.exit("Error: Must specify either --density/--fraction (e.g. 0.25) or --num-bodies (e.g. 50).")
+  # Resolve z_height
+  z_fixed = args.z_height
+  if z_fixed is None:
+    if 'z_height' in file_opts:
+      z_fixed = float(file_opts['z_height'])
+    else:
+      z_fixed = 2.0 * radius
+
+  if z_fixed < radius:
+    print(f"[!] Warning: z_height ({z_fixed}) is less than sphere radius ({radius}). Floor wall is at z=0.")
+
+  # Resolve density / num_bodies
+  fraction = args.fraction
+  if fraction is None:
+    if 'density' in file_opts:
+      fraction = float(file_opts['density'])
+    elif 'fraction' in file_opts:
+      fraction = float(file_opts['fraction'])
+
+  num_bodies = args.num_bodies
+  if num_bodies is None:
+    if 'num_bodies' in file_opts:
+      num_bodies = int(file_opts['num_bodies'])
+    elif 'N' in file_opts:
+      num_bodies = int(file_opts['N'])
+
+  if num_bodies is None and fraction is None:
+    sys.exit("Error: Must specify either --density/fraction or --num-bodies/N in CLI or input file.")
+
+  # Resolve safety_gap
+  safety_gap = args.safety_gap
+  if safety_gap is None:
+    if 'safety_gap' in file_opts:
+      safety_gap = float(file_opts['safety_gap'])
+    else:
+      safety_gap = 0.05
+
+  # Resolve periodic
+  periodic = args.periodic if args.periodic is not None else False
+  if not periodic and 'periodic' in file_opts:
+    periodic = file_opts['periodic'].lower() in ['true', '1', 'yes']
+
+  # Resolve outputs
+  output_clones = args.output_clones or file_opts.get('output_clones') or 'data/generated_spheres.clones'
+  plot_image = args.plot_image or file_opts.get('plot_image') or 'data/spheres_plot.png'
+  vertex_file = args.vertex_file or file_opts.get('vertex_file') or 'Structures/shell_N_12_Rg_1.vertex'
+  
+  # Resolve random_quaternions
+  rand_quat = args.random_quaternions if args.random_quaternions is not None else False
+  if not rand_quat and 'random_quaternions' in file_opts:
+    rand_quat = file_opts['random_quaternions'].lower() in ['true', '1', 'yes']
+
+  # Resolve seed
+  seed = args.seed
+  if seed is None and 'seed' in file_opts:
+    seed = int(file_opts['seed'])
 
   print("=" * 60)
   print("2D Sphere Suspension Generator")
   print("=" * 60)
   print(f"Domain Bounds       : [x: {bounds[0]} -> {bounds[1]}, y: {bounds[2]} -> {bounds[3]}]")
-  print(f"Sphere Radius (R)   : {args.radius}")
+  print(f"Sphere Radius (R)   : {radius}")
   print(f"Fixed Z Height      : {z_fixed}")
-  print(f"Safety Gap Buffer   : {args.safety_gap * 100:.1f}% -> d_min = {2.0 * args.radius * (1.0 + args.safety_gap):.4f}")
-  print(f"Periodic Boundaries : {args.periodic}")
+  print(f"Safety Gap Buffer   : {safety_gap * 100:.1f}% -> d_min = {2.0 * radius * (1.0 + safety_gap):.4f}")
+  print(f"Periodic Boundaries : {periodic}")
 
   # Generate positions
   positions, quaternions, achieved_fraction, min_d, min_target = generate_sphere_suspension_2d(
     bounds=bounds,
-    target_count=args.num_bodies,
-    target_fraction=args.fraction,
-    radius=args.radius,
+    target_count=num_bodies,
+    target_fraction=fraction,
+    radius=radius,
     z_fixed=z_fixed,
-    safety_gap=args.safety_gap,
-    periodic=args.periodic,
-    randomize_quaternions=args.random_quaternions,
-    seed=args.seed
+    safety_gap=safety_gap,
+    periodic=periodic,
+    randomize_quaternions=rand_quat,
+    seed=seed
   )
 
   N = len(positions)
@@ -362,19 +464,19 @@ def main():
     print("[WARNING] Some spheres have distance close to cutoff. Consider increasing domain size.")
 
   # Save clones file
-  save_clones_file(args.output_clones, positions, quaternions)
-  print(f"[+] Output clones file saved to: {args.output_clones}")
+  save_clones_file(output_clones, positions, quaternions)
+  print(f"[+] Output clones file saved to: {output_clones}")
 
   # Plot image
-  if args.plot_image:
-    plot_suspension_2d(bounds, positions, args.radius, achieved_fraction, min_d, min_target, args.plot_image)
+  if plot_image:
+    plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_target, plot_image)
 
   # Print inputfile snippet
   print("=" * 60)
   print("HOW TO USE IN YOUR SIMULATION:")
   print(f"Add this line to your multi_bodies inputfile (e.g. inputfile_dynamic.dat):")
-  print(f"structure {args.vertex_file} {args.output_clones}")
-  if args.periodic:
+  print(f"structure {vertex_file} {output_clones}")
+  if periodic:
     Lx = bounds[1] - bounds[0]
     Ly = bounds[3] - bounds[2]
     print(f"periodic_length {Lx:.1f} {Ly:.1f} 0.0")
@@ -383,3 +485,4 @@ def main():
 
 if __name__ == '__main__':
   main()
+

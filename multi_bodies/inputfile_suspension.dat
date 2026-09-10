@@ -1,0 +1,31 @@
+# ==========================================================
+# 2D Sphere Suspension Generator Input File
+# ==========================================================
+
+# Domain bounding box: xmin xmax ymin ymax (or Lx Ly)
+box                                      0.0 50.0 0.0 50.0
+
+# Fixed vertical height z of sphere centers above floor wall (z=0)
+z_height                                 2.0
+
+# Target 2D area packing fraction (density)
+density                                  0.25
+
+# Alternatively, specify exact number of spheres instead of density:
+# num_bodies                             199
+
+# Sphere hydrodynamic radius
+radius                                   1.0
+
+# Safety distance buffer fraction above 2R (e.g. 0.05 -> d_min = 2.1R)
+safety_gap                               0.05
+
+# Periodic boundary conditions (True / False)
+periodic                                 False
+
+# Output file destinations
+output_clones                            data/generated_spheres.clones
+plot_image                               data/spheres_plot.png
+
+# Reference vertex template file
+vertex_file                              Structures/shell_N_12_Rg_1.vertex
