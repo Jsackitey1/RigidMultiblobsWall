@@ -384,10 +384,10 @@ def main():
                       help="Safety gap buffer fraction above 2R (default: 0.05 -> d_min = 2.1R)")
   parser.add_argument('--periodic', action='store_true',
                       help="Enable periodic boundary condition wrapping in x and y")
-  parser.add_argument('--output-clones', type=str, default='Structures/generated_spheres.clones',
-                      help="Path to save the generated *.clones file")
+  parser.add_argument('--output-clones', type=str, default='data/generated_spheres.clones',
+                      help="Path to save the generated *.clones file (default: data/generated_spheres.clones)")
   parser.add_argument('--plot-image', type=str, default=None,
-                      help="Path to save a visual verification PNG plot")
+                      help="Path to save a visual verification PNG plot (e.g. data/spheres_plot.png)")
   parser.add_argument('--random-quaternions', action='store_true',
                       help="Randomize 3D orientations (default: identity quaternion 1,0,0,0)")
   parser.add_argument('--seed', type=int, default=None,
