@@ -47,8 +47,8 @@ def main():
                         help='Visualization mode: spheres, blobs, html, or all (default: all)')
     parser.add_argument('--radius', '-r', type=float, default=None,
                         help='Particle radius override (optional, auto-computed from vertex file by default)')
-    parser.add_argument('--duration', '-d', type=float, default=8.0,
-                        help='Target video duration in seconds (default: 8.0s)')
+    parser.add_argument('--duration', '-d', type=float, default=10.0,
+                        help='Target video and HTML playback duration in seconds (default: 10.0s)')
     parser.add_argument('--fps', type=int, default=24,
                         help='Video frame rate for smooth playback (default: 24 fps)')
     parser.add_argument('--output-dir', '-o', type=str, default='data/visualizations',
@@ -143,7 +143,7 @@ def main():
     if args.mode in ['html', 'interactive', 'all']:
         print("\n--- 3. Generating Interactive 2D HTML5 Simulation Player ---")
         html_path = os.path.join(args.output_dir, 'interactive_simulation_player.html')
-        out_html = export_interactive_html(raw_traj, html_path)
+        out_html = export_interactive_html(traj, html_path, target_duration=args.duration)
         generated_all.append(out_html)
 
     print("\n" + "=" * 70)

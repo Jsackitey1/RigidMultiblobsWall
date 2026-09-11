@@ -9,9 +9,10 @@ import math
 import numpy as np
 
 
-def export_interactive_html(traj, output_path):
+def export_interactive_html(traj, output_path, target_duration=10.0):
     '''
     Export self-contained 2D HTML5 Canvas interactive simulation player.
+    target_duration: Target playback length in seconds (default: 10.0s).
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
@@ -42,6 +43,7 @@ def export_interactive_html(traj, output_path):
         'blob_radius': float(traj.blob_radius),
         'domain_bounds': [float(x) for x in traj.domain_bounds],
         'vertex_blobs': vertex_blobs_list,
+        'target_duration': float(target_duration),
         'frames': frames_data
     }
 
@@ -202,10 +204,10 @@ def export_interactive_html(traj, output_path):
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
                 RigidMultiblobsWall 2D Player
             </div>
-            <div class="hud-stat">Time: <span id="stat-time">0.000</span> s</div>
+            <div class="hud-stat">Physical Time: <span id="stat-time">0.000</span> s</div>
             <div class="hud-stat">Frame: <span id="stat-frame">1</span> / <span id="stat-total-frames">{traj.num_frames}</span></div>
+            <div class="hud-stat">Duration: <span id="stat-duration">{target_duration:.1f}</span> s</div>
             <div class="hud-stat">Active Bodies: <span>{traj.num_bodies}</span></div>
-            <div class="hud-stat">Body Radius $R$: <span>{traj.sphere_radius:.3f}</span></div>
             <div class="hud-stat">Mean Height $\langle z \rangle$: <span id="stat-mean-z">0.000</span></div>
         </div>
 
@@ -237,11 +239,12 @@ def export_interactive_html(traj, output_path):
             <div class="control-group">
                 <label>Speed:</label>
                 <select id="select-speed">
-                    <option value="0.25">0.25x</option>
-                    <option value="0.5">0.5x</option>
-                    <option value="1" selected>1.0x</option>
-                    <option value="2">2.0x</option>
-                    <option value="4">4.0x</option>
+                    <option value="0.1">0.1x (Slowest)</option>
+                    <option value="0.25">0.25x (Slow)</option>
+                    <option value="0.5">0.5x (Half)</option>
+                    <option value="1" selected>1.0x (Normal)</option>
+                    <option value="2">2.0x (Fast)</option>
+                    <option value="4">4.0x (Fastest)</option>
                 </select>
             </div>
             <button id="btn-reset-view" class="btn-secondary">Reset View</button>
@@ -608,7 +611,9 @@ def export_interactive_html(traj, output_path):
             lastTimestamp = timestamp;
 
             if (isPlaying && numFrames > 1) {{
-                accumulator += dt * 4.0 * playSpeed;
+                const targetDuration = simData.target_duration || 10.0;
+                const playbackFPS = numFrames / Math.max(1.0, targetDuration);
+                accumulator += dt * playbackFPS * playSpeed;
                 if (accumulator >= 1.0) {{
                     const steps = Math.floor(accumulator);
                     accumulator -= steps;
