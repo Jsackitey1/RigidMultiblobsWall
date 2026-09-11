@@ -4,13 +4,10 @@
 
 import numpy as np
 import sys
-from . import sphere as sph
 sys.path.append('..')
+import sphere as sph
 
-
-
-
-from fluids import mobility as mb
+from mobility import mobility as mb
 from quaternion_integrator.quaternion import Quaternion
 
 

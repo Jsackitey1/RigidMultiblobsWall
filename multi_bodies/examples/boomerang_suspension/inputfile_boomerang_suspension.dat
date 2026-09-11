@@ -11,11 +11,12 @@ scheme                                   stochastic_Slip_Trapz
 # Select implementation to compute M and M*f
 # We recommend to use the C++ implementation which is faster,
 # see documentation
-mobility_blobs_implementation            C++
-mobility_vector_prod_implementation      pycuda
+mobility_blobs_implementation            python
+mobility_vector_prod_implementation      numba
 
 # Select implementation to compute the blobs-blob interactions
-blob_blob_force_implementation           pycuda
+blob_blob_force_implementation           numba
+body_body_force_torque_implementation	   python
 
 # Set time step, number of steps and save frequency
 dt                                       0.01

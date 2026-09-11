@@ -23,4 +23,23 @@
 
 # Exclude some folders #
 ########################
+sphere/data/
+sphere/figures/
+sphere/logs/
+multi_bodies/data/visualizations/
+
+# Simulation output & temp files #
+##################################
+*.log
+*.pkl
+*.bodies_info
+*.random_state
+*.time
+*.info
+*.inputfile
+run_*.git
+.DS_Store
+data/*
+
+
 
