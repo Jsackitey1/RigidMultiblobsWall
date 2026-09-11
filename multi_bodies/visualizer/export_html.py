@@ -379,6 +379,59 @@ def export_interactive_html(traj, output_path):
                     targetCtx.fillStyle = '#ffffff';
                     targetCtx.fill();
                 }}
+            }} else if (renderMode === 'blobs') {{
+                const bRadius = blobRadius * cam.scale;
+                const quats = frame.quaternions;
+
+                for (let i = 0; i < numBodies; i++) {{
+                    const [bx, by, bz] = pos[i];
+                    const q = quats[i];
+                    const q0 = q[0], q1 = q[1], q2 = q[2], q3 = q[3];
+                    const diag = q0 * q0 - 0.5;
+
+                    // Rotation matrix SO(3)
+                    const r00 = 2 * (q1 * q1 + diag);
+                    const r01 = 2 * (q1 * q2 - q0 * q3);
+                    const r02 = 2 * (q1 * q3 + q0 * q2);
+                    const r10 = 2 * (q2 * q1 + q0 * q3);
+                    const r11 = 2 * (q2 * q2 + diag);
+                    const r12 = 2 * (q2 * q3 - q0 * q1);
+                    const r20 = 2 * (q3 * q1 - q0 * q2);
+                    const r21 = 2 * (q3 * q2 + q0 * q1);
+                    const r22 = 2 * (q3 * q3 + diag);
+
+                    if (vertexBlobs && vertexBlobs.length > 0) {{
+                        for (let k = 0; k < vertexBlobs.length; k++) {{
+                            const [lx, ly, lz] = vertexBlobs[k];
+                            const gx = bx + (r00 * lx + r01 * ly + r02 * lz);
+                            const gy = by + (r10 * lx + r11 * ly + r12 * lz);
+                            const gz = bz + (r20 * lx + r21 * ly + r22 * lz);
+
+                            const bp = worldToScreen(gx, gy, w, h, cam);
+                            targetCtx.beginPath();
+                            targetCtx.arc(bp.x, bp.y, Math.max(1.5, bRadius), 0, Math.PI * 2);
+                            const zNorm = (gz - 1.0) / 2.0;
+                            targetCtx.fillStyle = getViridisColor(zNorm);
+                            targetCtx.fill();
+                            targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                            targetCtx.lineWidth = 0.5;
+                            targetCtx.stroke();
+                        }}
+                    }} else {{
+                        const bp = worldToScreen(bx, by, w, h, cam);
+                        targetCtx.beginPath();
+                        targetCtx.arc(bp.x, bp.y, Math.max(2, bRadius), 0, Math.PI * 2);
+                        targetCtx.fillStyle = getViridisColor((bz - 1.0) / 2.0);
+                        targetCtx.fill();
+                    }}
+
+                    // Body center marker
+                    const cp = worldToScreen(bx, by, w, h, cam);
+                    targetCtx.beginPath();
+                    targetCtx.arc(cp.x, cp.y, 2, 0, Math.PI * 2);
+                    targetCtx.fillStyle = '#38bdf8';
+                    targetCtx.fill();
+                }}
             }}
         }}
 

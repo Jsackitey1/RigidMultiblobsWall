@@ -5,14 +5,17 @@ Generates 2D MP4 videos (H.264 / yuv420p) and standalone interactive 2D HTML5 pl
 Works with any simulation run, any particle count, and any body radius.
 
 Usage:
-  # Generate all 2D MP4 videos (8 seconds long at 24 fps) and 2D interactive HTML player:
+  # Generate both Spheres and Multi-Blobs MP4 videos + Interactive HTML player:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode all
 
-  # Generate 2D top-down view with custom duration:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode 2d_top --duration 10.0 --fps 30
+  # Generate only the Spheres video:
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode spheres --duration 8.0 --fps 24
 
-  # Generate 2D side elevation view:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode 2d_side
+  # Generate only the Multi-Blobs video:
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode blobs --duration 8.0 --fps 24
+
+  # Generate only the Interactive 2D HTML player:
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode html
 '''
 
 import os
@@ -28,8 +31,6 @@ if parent_dir not in sys.path:
 
 from visualizer.trajectory_loader import load_simulation_data
 from visualizer.render_2d import render_2d_video
-from visualizer.render_graphs import render_graph_video
-from visualizer.render_composite import render_composite_video
 from visualizer.export_html import export_interactive_html
 
 
@@ -42,8 +43,8 @@ def main():
     parser.add_argument('--vertex-file', '-v', type=str, default=None,
                         help='Path to body .vertex file (optional, auto-detected from input file)')
     parser.add_argument('--mode', '-m', type=str, default='all',
-                        choices=['2d_top', '2d_side', '2d_dual', '2d_blobs', 'graphs', 'composite', 'interactive_html', 'all'],
-                        help='Visualization mode (default: all)')
+                        choices=['spheres', 'blobs', 'html', 'interactive', 'all'],
+                        help='Visualization mode: spheres, blobs, html, or all (default: all)')
     parser.add_argument('--radius', '-r', type=float, default=None,
                         help='Particle radius override (optional, auto-computed from vertex file by default)')
     parser.add_argument('--duration', '-d', type=float, default=8.0,
@@ -57,7 +58,7 @@ def main():
     parser.add_argument('--no-trails', action='store_true',
                         help='Disable trajectory motion trails')
     parser.add_argument('--no-vectors', action='store_true',
-                        help='Disable velocity vectors in 2D views')
+                        help='Disable velocity vectors in spheres view')
 
     args = parser.parse_args()
 
@@ -120,63 +121,33 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     generated_all = []
 
-    # 1. 2D Top-Down Suspension View (X-Y)
-    if args.mode in ['2d_top', 'all']:
-        print("\n--- 1. Generating 2D Top-Down Suspension Video (X-Y Plane) ---")
-        top_path = os.path.join(args.output_dir, 'suspension_2d_topdown.mp4')
-        out_top = render_2d_video(traj, top_path, view='top', mode='spheres',
-                                  fps=args.fps, show_vectors=not args.no_vectors,
-                                  show_trails=not args.no_trails)
-        generated_all.extend(out_top)
+    # 1. 2D Spheres / Bodies Video
+    if args.mode in ['spheres', 'all']:
+        print("\n--- 1. Generating 2D Spheres Suspension Video ---")
+        spheres_path = os.path.join(args.output_dir, 'spheres_simulation.mp4')
+        out_spheres = render_2d_video(traj, spheres_path, mode='spheres',
+                                      fps=args.fps, show_vectors=not args.no_vectors,
+                                      show_trails=not args.no_trails)
+        generated_all.extend(out_spheres)
 
-    # 2. 2D Side Elevation Profile View (X-Z)
-    if args.mode in ['2d_side', 'all']:
-        print("\n--- 2. Generating 2D Side Elevation Profile Video (X-Z Plane) ---")
-        side_path = os.path.join(args.output_dir, 'suspension_2d_side_elevation.mp4')
-        out_side = render_2d_video(traj, side_path, view='side', mode='spheres',
-                                   fps=args.fps)
-        generated_all.extend(out_side)
+    # 2. 2D Multi-Blobs Discretization Video
+    if args.mode in ['blobs', 'all']:
+        print("\n--- 2. Generating 2D Multi-Blobs Discretization Video ---")
+        blobs_path = os.path.join(args.output_dir, 'multiblobs_simulation.mp4')
+        out_blobs = render_2d_video(traj, blobs_path, mode='blobs',
+                                    fps=args.fps, show_vectors=False,
+                                    show_trails=not args.no_trails)
+        generated_all.extend(out_blobs)
 
-    # 3. 2D Dual View (X-Y Top-Down + X-Z Side Elevation Side-by-Side)
-    if args.mode in ['2d_dual', 'all']:
-        print("\n--- 3. Generating 2D Dual-View Video (X-Y Top + X-Z Side) ---")
-        dual_path = os.path.join(args.output_dir, 'suspension_2d_dual_view.mp4')
-        out_dual = render_2d_video(traj, dual_path, view='dual', mode='spheres',
-                                   fps=args.fps)
-        generated_all.extend(out_dual)
-
-    # 4. 2D Multi-Blobs Discretization View
-    if args.mode in ['2d_blobs', 'all']:
-        print("\n--- 4. Generating 2D Multi-Blob Discretization Video ---")
-        b2d_path = os.path.join(args.output_dir, 'multiblobs_2d_topdown.mp4')
-        out_b2d = render_2d_video(traj, b2d_path, view='top', mode='blobs',
-                                  fps=args.fps, show_vectors=False,
-                                  show_trails=not args.no_trails)
-        generated_all.extend(out_b2d)
-
-    # 5. Analytical Metrics Graph Video
-    if args.mode in ['graphs', 'all']:
-        print("\n--- 5. Generating Dynamic Analytical Metrics Graph Video ---")
-        g_path = os.path.join(args.output_dir, 'graph_metrics_dashboard.mp4')
-        out_g = render_graph_video(traj, g_path, fps=args.fps, format='mp4')
-        generated_all.extend(out_g)
-
-    # 6. Synchronized 2D Composite Dashboard Video
-    if args.mode in ['composite', 'all']:
-        print("\n--- 6. Generating Synchronized 2D Composite Dashboard Video ---")
-        c_path = os.path.join(args.output_dir, 'composite_2d_dashboard.mp4')
-        out_c = render_composite_video(traj, c_path, view_2d='top', fps=args.fps)
-        generated_all.extend(out_c)
-
-    # 7. Standalone Interactive 2D HTML5 Player
-    if args.mode in ['interactive_html', 'all']:
-        print("\n--- 7. Generating Interactive 2D HTML5 Player ---")
-        h_path = os.path.join(args.output_dir, 'interactive_2d_player.html')
-        out_h = export_interactive_html(raw_traj, h_path)
-        generated_all.append(out_h)
+    # 3. Standalone Interactive 2D HTML5 Player
+    if args.mode in ['html', 'interactive', 'all']:
+        print("\n--- 3. Generating Interactive 2D HTML5 Simulation Player ---")
+        html_path = os.path.join(args.output_dir, 'interactive_simulation_player.html')
+        out_html = export_interactive_html(raw_traj, html_path)
+        generated_all.append(out_html)
 
     print("\n" + "=" * 70)
-    print("All 2D visualizations successfully generated!")
+    print("All requested visualizations successfully generated!")
     print("=" * 70)
     for f in generated_all:
         print(f"  -> {f}")

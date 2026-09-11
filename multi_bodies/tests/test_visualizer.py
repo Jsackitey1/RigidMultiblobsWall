@@ -23,11 +23,9 @@ from visualizer.trajectory_loader import (
     parse_vertex_file
 )
 from visualizer.render_2d import (
-    render_2d_topdown_frame,
-    render_2d_side_elevation_frame,
-    render_2d_dual_frame
+    render_2d_frame,
+    render_2d_video
 )
-from visualizer.render_graphs import create_graph_dashboard_frame
 from visualizer.export_html import export_interactive_html
 
 
@@ -63,7 +61,6 @@ class TestVisualizer2D(unittest.TestCase):
 
     def test_dynamic_radius_calculation(self):
         '''Test dynamic radius resolution for arbitrary multiblob geometries.'''
-        # 12-blob unit sphere with blob radius 0.25
         blobs, geom_r = parse_vertex_file(self.vertex_path) if os.path.exists(self.vertex_path) else (None, 1.0)
         eff_r = compute_effective_radius(blobs, blob_radius=0.25, fallback=1.0)
         self.assertGreater(eff_r, 0.5)
@@ -84,32 +81,30 @@ class TestVisualizer2D(unittest.TestCase):
             self.assertAlmostEqual(interp_traj.time_array[-1], raw_traj.time_array[-1])
 
     def test_2d_frame_renderers(self):
-        '''Test rendering 2D frames without error.'''
+        '''Test rendering 2D frames for both spheres and blobs.'''
         if os.path.exists(self.config_path):
             traj = load_simulation_data(self.config_path, input_file=self.input_path)
             
-            # Top-down frame
-            f_top = render_2d_topdown_frame(traj, 0, mode='spheres')
-            self.assertEqual(f_top.ndim, 3)
-            self.assertEqual(f_top.shape[2], 3)
+            # Spheres frame
+            f_spheres = render_2d_frame(traj, 0, mode='spheres')
+            self.assertEqual(f_spheres.ndim, 3)
+            self.assertEqual(f_spheres.shape[2], 3)
 
-            # Side-elevation frame
-            f_side = render_2d_side_elevation_frame(traj, 0)
-            self.assertEqual(f_side.ndim, 3)
+            # Blobs frame
+            f_blobs = render_2d_frame(traj, 0, mode='blobs')
+            self.assertEqual(f_blobs.ndim, 3)
+            self.assertEqual(f_blobs.shape[2], 3)
 
-            # Dual frame
-            f_dual = render_2d_dual_frame(traj, 0)
-            self.assertEqual(f_dual.ndim, 3)
-
-    def test_2d_html_export(self):
-        '''Test interactive 2D HTML player generation.'''
+    def test_html_player_export(self):
+        '''Test standalone interactive HTML5 player generation.'''
         if os.path.exists(self.config_path):
             traj = load_simulation_data(self.config_path, input_file=self.input_path)
             out_html = '/tmp/test_2d_player.html'
-            export_interactive_html(traj, out_html)
-            self.assertTrue(os.path.exists(out_html))
-            self.assertGreater(os.path.getsize(out_html), 1000)
-            os.remove(out_html)
+            res = export_interactive_html(traj, out_html)
+            self.assertTrue(os.path.exists(res))
+            self.assertGreater(os.path.getsize(res), 1000)
+            if os.path.exists(out_html):
+                os.remove(out_html)
 
 
 if __name__ == '__main__':

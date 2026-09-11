@@ -26,6 +26,7 @@
 sphere/data/
 sphere/figures/
 sphere/logs/
+multi_bodies/data/visualizations/
 
 # Simulation output & temp files #
 ##################################
