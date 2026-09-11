@@ -69,7 +69,7 @@ def main():
             from visualizer.trajectory_loader import parse_input_file
             opts = parse_input_file(args.input_file)
             out_prefix = opts.get('output_name', 'data/run')
-            struct_str = opts.get('structure', '')
+            struct_str = opts.get('structure0', '')
             struct_name = 'generated_spheres'
             if struct_str:
                 clones_path = struct_str.split()[-1]

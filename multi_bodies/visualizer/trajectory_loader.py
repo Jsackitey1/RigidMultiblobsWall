@@ -6,6 +6,7 @@ Supports arbitrary simulations, body shapes, and particle radii without hardcode
 import os
 import re
 import math
+import warnings
 import numpy as np
 
 
@@ -295,44 +296,75 @@ def parse_input_file(input_file_path):
     if not input_file_path or not os.path.exists(input_file_path):
         return params
 
+    # Track multi-occurrence keys (structure, obstacle, articulated)
+    num_structures = 0
+    num_obstacles = 0
+    num_articulated = 0
+
     with open(input_file_path, 'r') as f:
         for line in f:
+            # Strip inline comments before parsing (Bug 3)
+            if '#' in line:
+                line = line.split('#', 1)[0]
             line = line.strip()
-            if not line or line.startswith('#'):
+            if not line:
                 continue
-            parts = line.split()
+            parts = line.split(None, 1)
             if len(parts) >= 2:
                 key = parts[0]
-                val = parts[1] if len(parts) == 2 else ' '.join(parts[1:])
+                val = parts[1].strip()
+                # Index multi-occurrence keys to avoid overwriting (Bug 9)
+                if key == 'structure':
+                    key = 'structure' + str(num_structures)
+                    num_structures += 1
+                elif key == 'obstacle':
+                    key = 'obstacle' + str(num_obstacles)
+                    num_obstacles += 1
+                elif key == 'articulated':
+                    key = 'articulated' + str(num_articulated)
+                    num_articulated += 1
                 params[key] = val
     return params
 
 
 def parse_vertex_file(vertex_file_path):
-    '''Parse reference multiblob vertices from a .vertex file.'''
+    '''
+    Parse reference multiblob vertices from a .vertex file.
+    Strips # comments before parsing, matching the repo convention.
+    Returns (blobs_array, num_blobs) — does NOT read a radius from the header.
+    '''
     if not vertex_file_path or not os.path.exists(vertex_file_path):
-        return None, 0.0
+        return None
 
     blobs = []
+    num_blobs = None
     with open(vertex_file_path, 'r') as f:
-        first_line = f.readline().strip().split()
-        num_blobs = int(first_line[0])
-        geom_radius = float(first_line[1]) if len(first_line) > 1 else 1.0
         for line in f:
+            # Strip comments (Bug 2: handles comment-headed .vertex files)
+            if '#' in line:
+                line = line.split('#', 1)[0]
             line = line.strip()
-            if not line or line.startswith('#'):
+            if not line:
                 continue
-            parts = [float(x) for x in line.split()]
-            if len(parts) >= 3:
-                blobs.append(parts[:3])
-            if len(blobs) >= num_blobs:
-                break
-    return np.array(blobs, dtype=np.float64), geom_radius
+            if num_blobs is None:
+                # First non-comment, non-blank line is the header with blob count
+                num_blobs = int(line.split()[0])
+            else:
+                parts = line.split()
+                if len(parts) >= 3:
+                    blobs.append([float(parts[0]), float(parts[1]), float(parts[2])])
+                if len(blobs) >= num_blobs:
+                    break
+
+    if not blobs:
+        return None
+    return np.array(blobs, dtype=np.float64)
 
 
 def parse_config_file(config_file_path):
     '''
     Parse all valid frames from a .config simulation output file.
+    Warns on truncated/malformed frames instead of silently discarding them.
     '''
     if not os.path.exists(config_file_path):
         raise FileNotFoundError(f"Config file not found: {config_file_path}")
@@ -345,6 +377,7 @@ def parse_config_file(config_file_path):
 
     idx = 0
     total_lines = len(lines)
+    frame_number = 0
 
     while idx < total_lines:
         line = lines[idx].strip()
@@ -360,6 +393,12 @@ def parse_config_file(config_file_path):
 
         idx += 1
         if idx + num_bodies > total_lines:
+            warnings.warn(
+                f"Config file truncated: frame {frame_number} declares {num_bodies} bodies "
+                f"but only {total_lines - idx} lines remain. "
+                f"Keeping {len(frames_positions)} complete frames.",
+                RuntimeWarning
+            )
             break
 
         pos_list = []
@@ -368,8 +407,22 @@ def parse_config_file(config_file_path):
 
         for b in range(num_bodies):
             data_line = lines[idx + b].strip()
-            parts = [float(x) for x in data_line.split()]
+            try:
+                parts = [float(x) for x in data_line.split()]
+            except ValueError as e:
+                warnings.warn(
+                    f"Config file: non-numeric data in frame {frame_number}, body {b}: "
+                    f"{data_line!r} ({e}). Keeping {len(frames_positions)} complete frames.",
+                    RuntimeWarning
+                )
+                frame_valid = False
+                break
             if len(parts) < 7:
+                warnings.warn(
+                    f"Config file: frame {frame_number}, body {b} has only {len(parts)} values "
+                    f"(need 7). Keeping {len(frames_positions)} complete frames.",
+                    RuntimeWarning
+                )
                 frame_valid = False
                 break
             pos_list.append(parts[0:3])
@@ -379,6 +432,7 @@ def parse_config_file(config_file_path):
             frames_positions.append(pos_list)
             frames_quaternions.append(quat_list)
             idx += num_bodies
+            frame_number += 1
         else:
             break
 
@@ -404,9 +458,9 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
     n_save = int(params.get('n_save', 1))
     blob_radius = float(params.get('blob_radius', 0.25))
 
-    # Resolve vertex file
-    if vertex_file is None and 'structure' in params:
-        struct_parts = params['structure'].split()
+    # Resolve vertex file from first structure (structure0) (Bug 9)
+    if vertex_file is None and 'structure0' in params:
+        struct_parts = params['structure0'].split()
         if len(struct_parts) >= 1:
             candidate_v = struct_parts[0]
             if os.path.exists(candidate_v):
@@ -417,13 +471,11 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
                 if os.path.exists(candidate_rel):
                     vertex_file = candidate_rel
 
-    vertex_blobs, geom_radius = parse_vertex_file(vertex_file) if vertex_file else (None, 0.0)
+    vertex_blobs = parse_vertex_file(vertex_file) if vertex_file else None
 
-    # Dynamic radius calculation
+    # Dynamic radius calculation (Bug 1: always use compute_effective_radius)
     if manual_radius is not None and manual_radius > 0:
         sphere_radius = float(manual_radius)
-    elif geom_radius > 0:
-        sphere_radius = geom_radius
     else:
         sphere_radius = compute_effective_radius(vertex_blobs, blob_radius, fallback=1.0)
 
@@ -431,17 +483,39 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
     dt_effective = dt * n_save
     time_array = np.arange(num_frames) * dt_effective
 
-    # Determine domain bounds
+    # Determine domain bounds and handle periodic wrapping (Bug 8)
     domain_bounds = None
+    periodic_length = None
     if 'periodic_length' in params:
         p_len = [float(x) for x in params['periodic_length'].split()]
-        domain_bounds = [0.0, p_len[0], 0.0, p_len[1], 0.0, max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
+        if len(p_len) >= 2 and p_len[0] > 0 and p_len[1] > 0:
+            periodic_length = p_len
+            domain_bounds = [0.0, p_len[0], 0.0, p_len[1], 0.0,
+                             max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
     elif 'box' in params:
         b_parts = [float(x) for x in params['box'].split()]
         if len(b_parts) == 2:
-            domain_bounds = [0.0, b_parts[0], 0.0, b_parts[1], 0.0, max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
+            domain_bounds = [0.0, b_parts[0], 0.0, b_parts[1], 0.0,
+                             max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
         elif len(b_parts) >= 4:
-            domain_bounds = [b_parts[0], b_parts[1], b_parts[2], b_parts[3], 0.0, max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
+            domain_bounds = [b_parts[0], b_parts[1], b_parts[2], b_parts[3], 0.0,
+                             max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
+
+    # Bug 8: Wrap positions modulo L for display when periodic
+    # (MSD and velocities are computed from raw unwrapped positions inside SimulationTrajectory)
+    if periodic_length is not None:
+        Lx, Ly = periodic_length[0], periodic_length[1]
+        positions[..., 0] = positions[..., 0] % Lx
+        positions[..., 1] = positions[..., 1] % Ly
+
+    # Wall-penetration sanity check
+    min_z = float(np.min(positions[..., 2]))
+    if min_z < sphere_radius:
+        warnings.warn(
+            f"Wall penetration detected: minimum body z = {min_z:.4f} < sphere_radius = {sphere_radius:.4f}. "
+            f"This may indicate a bad simulation run.",
+            RuntimeWarning
+        )
 
     return SimulationTrajectory(
         positions=positions,

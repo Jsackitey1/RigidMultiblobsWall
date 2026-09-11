@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
 
-from .video_writer import save_video
+from .video_writer import save_video, VideoStreamWriter
 
 
 def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True, 
@@ -89,17 +89,21 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
 
     # --- Mode: 2D Discs + Orientation Director Pointers ---
     if mode == 'spheres':
+        # Bug 6: Sort by ascending z for correct depth ordering (painter's algorithm)
+        z_order = np.argsort(pos[:, 2])
+
         patches = []
-        for i in range(traj.num_bodies):
+        ordered_colors = []
+        for i in z_order:
             circle = Circle((pos[i, 0], pos[i, 1]), radius=R)
             patches.append(circle)
+            ordered_colors.append(colormap(norm(c_vals[i])))
 
-        colors = colormap(norm(c_vals))
-        p_coll = PatchCollection(patches, facecolors=colors, edgecolors='#ffffff', linewidths=1.0, alpha=0.9, zorder=4)
+        p_coll = PatchCollection(patches, facecolors=ordered_colors, edgecolors='#ffffff', linewidths=1.0, alpha=0.9, zorder=4)
         ax.add_collection(p_coll)
 
         # In-plane orientation pointer (radial needle from center to boundary)
-        for i in range(traj.num_bodies):
+        for i in z_order:
             th = angles[i]
             end_x = pos[i, 0] + R * math.cos(th)
             end_y = pos[i, 1] + R * math.sin(th)
@@ -119,13 +123,16 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
         all_blobs = traj.get_blobs_for_frame(frame_idx)
         if all_blobs is not None:
             a = traj.blob_radius
+            # Bug 6: Sort blobs by ascending z for correct depth ordering
+            blob_z_order = np.argsort(all_blobs[:, 2])
             blob_patches = []
-            for b in range(len(all_blobs)):
+            blob_ordered_colors = []
+            for b in blob_z_order:
                 blob_circle = Circle((all_blobs[b, 0], all_blobs[b, 1]), radius=a)
                 blob_patches.append(blob_circle)
+                blob_ordered_colors.append(colormap(norm(all_blobs[b, 2])))
             
-            blob_colors = colormap(norm(all_blobs[:, 2]))
-            bp_coll = PatchCollection(blob_patches, facecolors=blob_colors, edgecolors='#ffffff',
+            bp_coll = PatchCollection(blob_patches, facecolors=blob_ordered_colors, edgecolors='#ffffff',
                                       linewidths=0.5, alpha=0.9, zorder=4)
             ax.add_collection(bp_coll)
             ax.scatter(pos[:, 0], pos[:, 1], color='#38bdf8', s=12, zorder=6)
@@ -161,14 +168,11 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     return rgba[:, :, :3].copy()
 
 
-# Alias for backward compatibility
-render_2d_topdown_frame = render_2d_frame
-
-
 def render_2d_video(traj, output_path, mode='spheres', fps=24, 
                     show_vectors=True, show_trails=True, show_progress=True):
     '''
     Generate a 2D simulation MP4 video for spheres or multiblobs.
+    Streams frames directly to disk to avoid buffering the entire video in RAM.
     
     Parameters
     ----------
@@ -182,27 +186,24 @@ def render_2d_video(traj, output_path, mode='spheres', fps=24,
         Frame rate for video encoding.
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    frames = []
 
     if show_progress:
         print(f"[*] Rendering {traj.num_frames} 2D frames (mode={mode})...")
 
     fig = plt.figure(figsize=(10, 10), dpi=100, facecolor='#0b0f19')
 
-    for i in range(traj.num_frames):
-        frame = render_2d_frame(traj, i, fig=fig, mode=mode,
-                                show_vectors=show_vectors, show_trails=show_trails)
-        frames.append(frame)
-        if show_progress:
-            print(f"    Rendered 2D frame {i+1}/{traj.num_frames}", end='\r')
+    # Bug 7: Stream frames directly to disk instead of buffering in RAM
+    with VideoStreamWriter(output_path, fps=fps) as writer:
+        for i in range(traj.num_frames):
+            frame = render_2d_frame(traj, i, fig=fig, mode=mode,
+                                    show_vectors=show_vectors, show_trails=show_trails)
+            writer.write_frame(frame)
+            if show_progress:
+                print(f"    Rendered 2D frame {i+1}/{traj.num_frames}", end='\r')
 
     plt.close(fig)
     if show_progress:
         print()
+        print(f"[+] Saved 2D MP4 Video: {writer.path}")
 
-    generated_files = save_video(frames, output_path, fps=fps, format='mp4')
-    if show_progress:
-        for f in generated_files:
-            print(f"[+] Saved 2D MP4 Video: {f}")
-
-    return generated_files
+    return [writer.path]

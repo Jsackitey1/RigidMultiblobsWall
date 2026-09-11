@@ -16,13 +16,29 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
+    # Compute global z range for dynamic colour normalization (Bug 4)
+    all_z = traj.positions[..., 2]
+    z_min = float(min(0.0, np.min(all_z)))
+    z_max = float(max(np.max(all_z) + 0.5, traj.sphere_radius * 3.0))
+
+    # Generate true viridis 256-entry LUT from matplotlib (Bug 5)
+    try:
+        import matplotlib.cm as cm
+        viridis_lut = []
+        for i in range(256):
+            r, g, b, _ = cm.viridis(i / 255.0)
+            viridis_lut.append([int(round(r * 255)), int(round(g * 255)), int(round(b * 255))])
+    except ImportError:
+        # Hardcoded fallback — first/last entries from true viridis
+        viridis_lut = [[68, 1, 84]] * 128 + [[253, 231, 37]] * 128
+
     frames_data = []
     for f in range(traj.num_frames):
         pos_f = traj.positions[f].round(4).tolist()
         quat_f = traj.quaternions[f].round(4).tolist()
         speeds_f = traj.speeds[f].round(4).tolist()
         angles_f = traj.get_inplane_orientation_angles(f).round(4).tolist()
-        vels_f = traj.velocities[f].round(4).tolist() if hasattr(traj, 'velocities') else []
+        # Minor: removed dead velocities payload — never read by JS
 
         frames_data.append({
             'time': round(float(traj.time_array[f]), 4),
@@ -30,8 +46,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             'positions': pos_f,
             'quaternions': quat_f,
             'speeds': speeds_f,
-            'angles': angles_f,
-            'velocities': vels_f
+            'angles': angles_f
         })
 
     vertex_blobs_list = traj.vertex_blobs.round(4).tolist() if traj.vertex_blobs is not None else []
@@ -44,6 +59,9 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
         'domain_bounds': [float(x) for x in traj.domain_bounds],
         'vertex_blobs': vertex_blobs_list,
         'target_duration': float(target_duration),
+        'z_min': z_min,
+        'z_max': z_max,
+        'viridis_lut': viridis_lut,
         'frames': frames_data
     }
 
@@ -208,7 +226,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             <div class="hud-stat">Frame: <span id="stat-frame">1</span> / <span id="stat-total-frames">{traj.num_frames}</span></div>
             <div class="hud-stat">Duration: <span id="stat-duration">{target_duration:.1f}</span> s</div>
             <div class="hud-stat">Active Bodies: <span>{traj.num_bodies}</span></div>
-            <div class="hud-stat">Mean Height $\langle z \rangle$: <span id="stat-mean-z">0.000</span></div>
+            <div class="hud-stat">Mean Height ⟨z⟩: <span id="stat-mean-z">0.000</span></div>
         </div>
 
         <div class="view-badge">
@@ -249,6 +267,16 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             </div>
             <button id="btn-reset-view" class="btn-secondary">Reset View</button>
         </div>
+
+        <!-- Bug 5: Colour-bar legend for z-height -->
+        <div id="legend" style="position:absolute;bottom:90px;right:20px;background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.12);border-radius:10px;padding:10px 14px;z-index:10;">
+            <div style="font-size:11px;color:#94a3b8;margin-bottom:6px;font-weight:600;">Height z</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span id="legend-min" style="font-size:10px;color:#f8fafc;">{z_min:.2f}</span>
+                <canvas id="legend-bar" width="120" height="14" style="border-radius:3px;"></canvas>
+                <span id="legend-max" style="font-size:10px;color:#f8fafc;">{z_max:.2f}</span>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -259,6 +287,9 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
         const blobRadius = simData.blob_radius;
         const vertexBlobs = simData.vertex_blobs;
         const [xmin, xmax, ymin, ymax, zmin, zmax] = simData.domain_bounds;
+        const zMin = simData.z_min;
+        const zMax = simData.z_max;
+        const viridisLUT = simData.viridis_lut;
 
         let currentFrame = 0;
         let isPlaying = true;
@@ -309,10 +340,15 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
 
         function getViridisColor(t) {{
             t = Math.max(0, Math.min(1, t));
-            const r = Math.round(255 * (0.267 + 0.004 * t + 0.329 * t * t));
-            const g = Math.round(255 * (0.003 + 0.873 * t - 0.231 * t * t));
-            const b = Math.round(255 * (0.329 + 0.551 * t - 0.540 * t * t));
+            const idx = Math.min(255, Math.round(t * 255));
+            const [r, g, b] = viridisLUT[idx];
             return `rgb(${{r}}, ${{g}}, ${{b}})`;
+        }}
+
+        function zNormalize(z) {{
+            const range = zMax - zMin;
+            if (range <= 0) return 0.5;
+            return (z - zMin) / range;
         }}
 
         function drawTopDown(targetCtx, w, h, cam) {{
@@ -350,7 +386,11 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
 
             // Draw bodies / blobs
             if (renderMode === 'spheres') {{
-                for (let i = 0; i < numBodies; i++) {{
+                // Bug 6: Sort bodies by ascending z for correct depth ordering
+                const indices = Array.from({{length: numBodies}}, (_, i) => i);
+                indices.sort((a, b) => pos[a][2] - pos[b][2]);
+
+                for (const i of indices) {{
                     const [bx, by, bz] = pos[i];
                     const sp = worldToScreen(bx, by, w, h, cam);
                     const sRadius = R * cam.scale;
@@ -358,8 +398,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                     // Body Disc
                     targetCtx.beginPath();
                     targetCtx.arc(sp.x, sp.y, sRadius, 0, Math.PI * 2);
-                    const zNorm = (bz - 1.0) / 2.0;
-                    targetCtx.fillStyle = getViridisColor(zNorm);
+                    targetCtx.fillStyle = getViridisColor(zNormalize(bz));
                     targetCtx.fill();
                     targetCtx.strokeStyle = '#ffffff';
                     targetCtx.lineWidth = 1.0;
@@ -386,7 +425,11 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                 const bRadius = blobRadius * cam.scale;
                 const quats = frame.quaternions;
 
-                for (let i = 0; i < numBodies; i++) {{
+                // Bug 6: Sort bodies by ascending z for correct depth ordering
+                const indices = Array.from({{length: numBodies}}, (_, i) => i);
+                indices.sort((a, b) => pos[a][2] - pos[b][2]);
+
+                for (const i of indices) {{
                     const [bx, by, bz] = pos[i];
                     const q = quats[i];
                     const q0 = q[0], q1 = q[1], q2 = q[2], q3 = q[3];
@@ -413,8 +456,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                             const bp = worldToScreen(gx, gy, w, h, cam);
                             targetCtx.beginPath();
                             targetCtx.arc(bp.x, bp.y, Math.max(1.5, bRadius), 0, Math.PI * 2);
-                            const zNorm = (gz - 1.0) / 2.0;
-                            targetCtx.fillStyle = getViridisColor(zNorm);
+                            targetCtx.fillStyle = getViridisColor(zNormalize(gz));
                             targetCtx.fill();
                             targetCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
                             targetCtx.lineWidth = 0.5;
@@ -424,7 +466,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                         const bp = worldToScreen(bx, by, w, h, cam);
                         targetCtx.beginPath();
                         targetCtx.arc(bp.x, bp.y, Math.max(2, bRadius), 0, Math.PI * 2);
-                        targetCtx.fillStyle = getViridisColor((bz - 1.0) / 2.0);
+                        targetCtx.fillStyle = getViridisColor(zNormalize(bz));
                         targetCtx.fill();
                     }}
 
@@ -465,15 +507,18 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             targetCtx.setLineDash([]);
 
             // Draw sphere circles in X-Z
-            for (let i = 0; i < numBodies; i++) {{
+            // Bug 6: Sort by ascending y (depth into screen) for side view
+            const indices = Array.from({{length: numBodies}}, (_, i) => i);
+            indices.sort((a, b) => pos[a][1] - pos[b][1]);
+
+            for (const i of indices) {{
                 const [bx, by, bz] = pos[i];
                 const sp = worldToScreen(bx, bz, w, h, cam);
                 const sRadius = R * cam.scale;
 
                 targetCtx.beginPath();
                 targetCtx.arc(sp.x, sp.y, sRadius, 0, Math.PI * 2);
-                const zNorm = (bz - 1.0) / 2.0;
-                targetCtx.fillStyle = getViridisColor(zNorm);
+                targetCtx.fillStyle = getViridisColor(zNormalize(bz));
                 targetCtx.fill();
                 targetCtx.strokeStyle = '#ffffff';
                 targetCtx.lineWidth = 0.8;
@@ -562,7 +607,19 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
         wrapper.addEventListener('wheel', (e) => {{
             e.preventDefault();
             const factor = e.deltaY < 0 ? 1.15 : 0.87;
+            // Minor: Cursor-anchored zoom
+            const rect = wrapper.getBoundingClientRect();
+            const mx = e.clientX - rect.left;
+            const my = e.clientY - rect.top;
+            const w = wrapper.clientWidth;
+            const h = wrapper.clientHeight;
+            // World position under cursor before zoom
+            const wx = camera.x + (mx - w / 2) / camera.scale;
+            const wy = camera.y - (my - h / 2) / camera.scale;
             camera.scale *= factor;
+            // Adjust camera so world point stays under cursor
+            camera.x = wx - (mx - w / 2) / camera.scale;
+            camera.y = wy + (my - h / 2) / camera.scale;
             draw();
         }}, {{ passive: false }});
 
@@ -624,6 +681,16 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
         }}
 
         resize();
+
+        // Bug 5: Render colour-bar legend
+        const legendCanvas = document.getElementById('legend-bar');
+        const lctx = legendCanvas.getContext('2d');
+        for (let px = 0; px < legendCanvas.width; px++) {{
+            const t = px / (legendCanvas.width - 1);
+            lctx.fillStyle = getViridisColor(t);
+            lctx.fillRect(px, 0, 1, legendCanvas.height);
+        }}
+
         requestAnimationFrame(animate);
     </script>
 </body>
