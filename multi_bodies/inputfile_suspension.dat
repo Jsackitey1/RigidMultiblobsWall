@@ -9,10 +9,10 @@ box                                      0.0 50.0 0.0 50.0
 z_height                                 2.0
 
 # Target 2D area packing fraction (density)
-density                                  0.25
+#density                                  0.25
 
 # Alternatively, specify exact number of spheres instead of density:
-# num_bodies                             199
+num_bodies                             200
 
 # Sphere hydrodynamic radius
 radius                                   1.0

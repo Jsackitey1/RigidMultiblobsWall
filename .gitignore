@@ -37,6 +37,8 @@ sphere/logs/
 *.info
 *.inputfile
 run_*.git
+.DS_Store
+data/*
 
 
 
