@@ -95,6 +95,20 @@ class TrajectoryPhysics(unittest.TestCase):
                 t = load_simulation_data(p/'config', p/'in', coordinates='wrapped')
             self.assertAlmostEqual(t.msd[-1], .04)
 
+    def test_cli_missing_selected_config_does_not_load_default(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            (p/'data').mkdir()
+            (p/'data/run.generated_spheres.config').write_text('1\n0 0 3 1 0 0 0\n')
+            (p/'input.dat').write_text('structure small.vertex small.clones\nstructure large.vertex large.clones\n')
+            result = subprocess.run([sys.executable, str(ROOT/'multi_bodies/visualize_simulation.py'),
+                                     '--input-file', 'input.dat', '--structure-index', '1', '--mode', 'html'],
+                                    cwd=d, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Config file not found: data/run.large.config', result.stderr)
+            self.assertFalse((p/'data/visualizations').exists())
+
     def test_structure_selection(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d)

@@ -85,11 +85,8 @@ def main():
                 clones_base = os.path.basename(clones_path)
                 if clones_base.endswith('.clones'):
                     struct_name = clones_base[:-7]
-            candidate = f"{out_prefix}.{struct_name}.config"
-            if os.path.exists(candidate):
-                config_file = candidate
-            else:
-                config_file = 'data/run.generated_spheres.config'
+            # Never substitute another run when the selected trajectory is absent.
+            config_file = f"{out_prefix}.{struct_name}.config"
         else:
             config_file = 'data/run.generated_spheres.config'
 
