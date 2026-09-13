@@ -8,6 +8,7 @@ import re
 import math
 import warnings
 import numpy as np
+from geometry import bounding_radius
 
 
 def quaternion_to_rot_matrix(q):
@@ -17,6 +18,8 @@ def quaternion_to_rot_matrix(q):
     '''
     q0, q1, q2, q3 = q[0], q[1], q[2], q[3]
     norm = math.sqrt(q0*q0 + q1*q1 + q2*q2 + q3*q3)
+    if not np.isfinite(norm) or norm <= 1e-12:
+        raise ValueError("Quaternion must be finite and nonzero")
     if norm > 1e-12:
         q0, q1, q2, q3 = q0 / norm, q1 / norm, q2 / norm, q3 / norm
     
@@ -34,7 +37,8 @@ def batch_quaternion_to_rot_matrices(quats):
     Vectorized conversion of (N, 4) quaternions to (N, 3, 3) rotation matrices.
     '''
     norms = np.linalg.norm(quats, axis=-1, keepdims=True)
-    norms[norms == 0] = 1.0
+    if not np.isfinite(norms).all() or np.any(norms <= 1e-12):
+        raise ValueError("Quaternions must be finite and nonzero")
     q = quats / norms
 
     q0 = q[..., 0]
@@ -140,8 +144,34 @@ class SimulationTrajectory:
     '''
 
     def __init__(self, positions, quaternions, time_array, dt, vertex_blobs=None, 
-                 blob_radius=0.25, sphere_radius=1.0, domain_bounds=None, metadata=None):
-        self.positions = positions           # (num_frames, num_bodies, 3)
+                 blob_radius=0.25, sphere_radius=1.0, domain_bounds=None, metadata=None, periodic_lengths=(0, 0),
+                 analysis_source=None):
+        positions = np.array(positions, dtype=float, copy=True)
+        quaternions = np.array(quaternions, dtype=float, copy=True)
+        time_array = np.asarray(time_array, dtype=float)
+        if positions.ndim != 3 or positions.shape[-1] != 3 or not all(positions.shape[:2]) or not np.isfinite(positions).all():
+            raise ValueError('Positions must be finite, nonempty (frames, bodies, 3)')
+        if quaternions.shape != positions.shape[:2] + (4,):
+            raise ValueError('Quaternion shape must match positions')
+        norms = np.linalg.norm(quaternions, axis=-1, keepdims=True)
+        if not np.isfinite(norms).all() or np.any(norms <= 1e-12):
+            raise ValueError('Quaternions must be finite and nonzero')
+        quaternions /= norms
+        if time_array.shape != (len(positions),) or not np.isfinite(time_array).all() or np.any(np.diff(time_array) <= 0):
+            raise ValueError('Timestamps must be finite and strictly increasing')
+        self.periodic_lengths = np.asarray(periodic_lengths[:2], dtype=float)
+        if self.periodic_lengths.shape != (2,) or not np.isfinite(self.periodic_lengths).all() or np.any(self.periodic_lengths < 0):
+            raise ValueError('Periodic lengths must be two nonnegative finite values')
+        self.positions_unwrapped = positions
+        self.positions_wrapped = positions.copy()
+        for axis, length in enumerate(self.periodic_lengths):
+            if length > 0:
+                origin = domain_bounds[2*axis] if domain_bounds is not None else 0.0
+                self.positions_wrapped[..., axis] = origin + (positions[..., axis] - origin) % length
+        self.positions = self.positions_wrapped  # compatibility: display coordinates
+        self.analysis_source = analysis_source
+        self.bounding_radius = compute_effective_radius(vertex_blobs, blob_radius)
+        self.nominal_radius = (metadata or {}).get('nominal_radius')
         self.quaternions = quaternions       # (num_frames, num_bodies, 4)
         self.time_array = time_array         # (num_frames,)
         self.dt = dt
@@ -151,7 +181,7 @@ class SimulationTrajectory:
         self.blob_radius = blob_radius
         self.sphere_radius = sphere_radius
         self.domain_bounds = domain_bounds
-        self.metadata = metadata or {}
+        self.metadata = dict(metadata or {})
 
         # Auto-compute domain bounds if not provided
         if self.domain_bounds is None:
@@ -163,18 +193,29 @@ class SimulationTrajectory:
             zmin = 0.0
             zmax = float(max(np.max(self.positions[..., 2]) + pad, self.sphere_radius * 3.5))
             self.domain_bounds = [xmin, xmax, ymin, ymax, zmin, zmax]
+            for axis, length in enumerate(self.periodic_lengths):
+                if length > 0:
+                    self.domain_bounds[2*axis:2*axis+2] = [0.0, length]
 
-        self._compute_kinematics()
+        if analysis_source is None:
+            self._compute_kinematics()
+        else:
+            # Animation samples reference raw-frame analysis; never differentiate
+            # interpolated paths or present their MSD as a new measurement.
+            indices = np.clip(np.searchsorted(analysis_source.time_array, time_array, side='right') - 1,
+                              0, analysis_source.num_frames - 1)
+            for name in ('velocities', 'displacement_rate', 'speeds', 'mean_z', 'min_z', 'max_z', 'std_z'):
+                setattr(self, name, getattr(analysis_source, name)[indices])
+            self.msd = None
 
     def _compute_kinematics(self):
         '''Pre-compute velocities, height statistics, MSD, and in-plane 2D angles.'''
-        self.velocities = np.zeros_like(self.positions)
+        self.velocities = np.zeros_like(self.positions_unwrapped)
         if self.num_frames > 1:
-            dt_step = self.time_array[1] - self.time_array[0] if len(self.time_array) > 1 else self.dt
-            if dt_step <= 0:
-                dt_step = self.dt
-            self.velocities[:-1] = (self.positions[1:] - self.positions[:-1]) / dt_step
-            self.velocities[-1] = self.velocities[-2] if self.num_frames > 2 else self.velocities[0]
+            intervals = np.diff(self.time_array)
+            self.velocities[:-1] = np.diff(self.positions_unwrapped, axis=0) / intervals[:, None, None]
+            self.velocities[-1] = self.velocities[-2]  # display last measured interval
+        self.displacement_rate = self.velocities
 
         self.speeds = np.linalg.norm(self.velocities, axis=-1)  # (num_frames, num_bodies)
 
@@ -186,24 +227,26 @@ class SimulationTrajectory:
         self.std_z = np.std(z_coords, axis=-1)
 
         # Mean Squared Displacement (MSD)
-        disp = self.positions - self.positions[0:1]
+        disp = self.positions_unwrapped - self.positions_unwrapped[0:1]
         self.msd = np.mean(np.sum(disp**2, axis=-1), axis=-1)
 
-    def get_interpolated_trajectory(self, target_duration=8.0, fps=24):
+    def get_interpolated_trajectory(self, target_duration=20.0, fps=30):
         '''
-        Generate a smoothly interpolated trajectory suitable for higher FPS and longer video playback.
-        target_duration: Target video length in seconds (e.g. 8.0s)
-        fps: Target frames per second (e.g. 24 fps -> 192 total frames)
+        Generate a smoothly interpolated trajectory suitable for the requested playback duration and FPS.
+        target_duration: Target video length in seconds (default: 20.0s)
+        fps: Target frames per second (default: 30 fps -> 600 total frames)
         '''
+        if not np.isfinite(target_duration) or target_duration <= 0 or not np.isfinite(fps) or fps <= 0:
+            raise ValueError('Playback duration and fps must be positive')
         if self.num_frames <= 1:
             return self
 
-        total_target_frames = max(self.num_frames, int(round(target_duration * fps)))
-        if total_target_frames == self.num_frames:
-            return self
+        total_target_frames = int(round(target_duration * fps))
+        if total_target_frames < 2:
+            raise ValueError('Duration and fps must allow at least two frames to preserve both endpoints')
 
         # Original frame timestamps normalized in [0, 1]
-        orig_indices = np.linspace(0, 1, self.num_frames)
+        orig_indices = (self.time_array - self.time_array[0]) / (self.time_array[-1] - self.time_array[0])
         target_indices = np.linspace(0, 1, total_target_frames)
 
         new_positions = np.zeros((total_target_frames, self.num_bodies, 3), dtype=np.float64)
@@ -222,8 +265,8 @@ class SimulationTrajectory:
             alpha = min(1.0, max(0.0, alpha))
 
             # Linear interpolation for positions
-            pos0 = self.positions[seg_idx]
-            pos1 = self.positions[seg_idx + 1]
+            pos0 = self.positions_unwrapped[seg_idx]
+            pos1 = self.positions_unwrapped[seg_idx + 1]
             new_positions[k] = (1.0 - alpha) * pos0 + alpha * pos1
 
             # SLERP for quaternions
@@ -242,7 +285,9 @@ class SimulationTrajectory:
             blob_radius=self.blob_radius,
             sphere_radius=self.sphere_radius,
             domain_bounds=self.domain_bounds,
-            metadata=self.metadata
+            metadata={**self.metadata, 'interpolated_for_visualization': True},
+            periodic_lengths=self.periodic_lengths,
+            analysis_source=self.analysis_source or self
         )
 
     def get_blobs_for_frame(self, frame_idx):
@@ -285,8 +330,7 @@ def compute_effective_radius(vertex_blobs, blob_radius, fallback=1.0):
     R = max_k ||r_k|| + a
     '''
     if vertex_blobs is not None and len(vertex_blobs) > 0:
-        max_dist = float(np.max(np.linalg.norm(vertex_blobs, axis=1)))
-        return max_dist + float(blob_radius)
+        return bounding_radius(vertex_blobs, blob_radius)
     return float(blob_radius if blob_radius > 0 else fallback)
 
 
@@ -358,6 +402,8 @@ def parse_vertex_file(vertex_file_path):
 
     if not blobs:
         return None
+    if len(blobs) != num_blobs or not np.isfinite(blobs).all():
+        raise ValueError('Vertex file must contain the declared number of finite vertices')
     return np.array(blobs, dtype=np.float64)
 
 
@@ -391,6 +437,8 @@ def parse_config_file(config_file_path):
             idx += 1
             continue
 
+        if num_bodies <= 0 or (frames_positions and num_bodies != len(frames_positions[0])):
+            raise ValueError('Frame body count must be positive and constant')
         idx += 1
         if idx + num_bodies > total_lines:
             warnings.warn(
@@ -444,7 +492,8 @@ def parse_config_file(config_file_path):
     return positions, quaternions
 
 
-def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_radius=None):
+def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_radius=None,
+                         structure_index=None, timestamps=None, coordinates="unwrapped"):
     '''
     High-level factory function to load any simulation run and construct
     a complete SimulationTrajectory instance with dynamic radius resolution.
@@ -458,9 +507,17 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
     n_save = int(params.get('n_save', 1))
     blob_radius = float(params.get('blob_radius', 0.25))
 
-    # Resolve vertex file from first structure (structure0) (Bug 9)
-    if vertex_file is None and 'structure0' in params:
-        struct_parts = params['structure0'].split()
+    structures = [key for key in params if re.fullmatch(r'structure\d+', key)]
+    if structure_index is None:
+        if len(structures) > 1 and vertex_file is None:
+            raise ValueError('Multiple structures: select structure_index or provide vertex_file explicitly')
+        structure_index = 0
+    if structure_index < 0 or (structures and 'structure'+str(structure_index) not in params):
+        raise ValueError('Selected structure index does not exist')
+    structure_key = 'structure' + str(structure_index)
+    # Resolve vertex file from selected structure (structure0) (Bug 9)
+    if vertex_file is None and structure_key in params:
+        struct_parts = params[structure_key].split()
         if len(struct_parts) >= 1:
             candidate_v = struct_parts[0]
             if os.path.exists(candidate_v):
@@ -471,7 +528,15 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
                 if os.path.exists(candidate_rel):
                     vertex_file = candidate_rel
 
+    if vertex_file is None and structure_key in params:
+        raise FileNotFoundError('Cannot resolve selected structure vertex file')
     vertex_blobs = parse_vertex_file(vertex_file) if vertex_file else None
+    if vertex_file is not None and vertex_blobs is None:
+        raise ValueError('Selected vertex file is missing or empty')
+    if not np.isfinite(blob_radius) or blob_radius <= 0:
+        raise ValueError('blob_radius must be finite and positive')
+    if manual_radius is not None and (not np.isfinite(manual_radius) or manual_radius <= 0):
+        raise ValueError('Display radius must be finite and positive')
 
     # Dynamic radius calculation (Bug 1: always use compute_effective_radius)
     if manual_radius is not None and manual_radius > 0:
@@ -481,41 +546,41 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
 
     # Build time array
     dt_effective = dt * n_save
-    time_array = np.arange(num_frames) * dt_effective
+    if not np.isfinite(dt_effective) or dt <= 0 or n_save <= 0:
+        raise ValueError('dt and n_save must be positive')
+    first_step = max(0, int(params.get('initial_step', 0)))
+    first_step = ((first_step + n_save - 1) // n_save) * n_save
+    time_array = np.asarray(timestamps, dtype=float) if timestamps is not None else first_step * dt + np.arange(num_frames) * dt_effective
 
-    # Determine domain bounds and handle periodic wrapping (Bug 8)
-    domain_bounds = None
-    periodic_length = None
+    periodic_length = np.zeros(2)
     if 'periodic_length' in params:
-        p_len = [float(x) for x in params['periodic_length'].split()]
-        if len(p_len) >= 2 and p_len[0] > 0 and p_len[1] > 0:
-            periodic_length = p_len
-            domain_bounds = [0.0, p_len[0], 0.0, p_len[1], 0.0,
-                             max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
-    elif 'box' in params:
-        b_parts = [float(x) for x in params['box'].split()]
-        if len(b_parts) == 2:
-            domain_bounds = [0.0, b_parts[0], 0.0, b_parts[1], 0.0,
-                             max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
-        elif len(b_parts) >= 4:
-            domain_bounds = [b_parts[0], b_parts[1], b_parts[2], b_parts[3], 0.0,
-                             max(np.max(positions[..., 2]) + 3.0, sphere_radius * 4.0)]
-
-    # Bug 8: Wrap positions modulo L for display when periodic
-    # (MSD and velocities are computed from raw unwrapped positions inside SimulationTrajectory)
-    if periodic_length is not None:
-        Lx, Ly = periodic_length[0], periodic_length[1]
-        positions[..., 0] = positions[..., 0] % Lx
-        positions[..., 1] = positions[..., 1] % Ly
-
-    # Wall-penetration sanity check
-    min_z = float(np.min(positions[..., 2]))
-    if min_z < sphere_radius:
-        warnings.warn(
-            f"Wall penetration detected: minimum body z = {min_z:.4f} < sphere_radius = {sphere_radius:.4f}. "
-            f"This may indicate a bad simulation run.",
-            RuntimeWarning
-        )
+        values = [float(x) for x in params['periodic_length'].split()]
+        if len(values) < 2 or not np.isfinite(values).all() or min(values[:2]) < 0:
+            raise ValueError('Invalid periodic_length')
+        periodic_length = np.array(values[:2])
+    pad = max(sphere_radius * 2.5, 2.0)
+    domain_bounds = [float(positions[..., 0].min()-pad), float(positions[..., 0].max()+pad),
+                     float(positions[..., 1].min()-pad), float(positions[..., 1].max()+pad),
+                     0.0, float(max(positions[..., 2].max()+pad, sphere_radius*3.5))]
+    if 'box' in params:
+        box = [float(x) for x in params['box'].split()]
+        if len(box) == 2:
+            domain_bounds[:4] = [0, box[0], 0, box[1]]
+        elif len(box) == 4:
+            domain_bounds[:4] = box
+    for axis, length in enumerate(periodic_length):
+        if length > 0:
+            domain_bounds[2*axis:2*axis+2] = [0.0, length]
+    if coordinates not in ('wrapped', 'unwrapped'):
+        raise ValueError('coordinates must be wrapped or unwrapped')
+    if coordinates == 'wrapped':
+        warnings.warn('Unwrapping assumes displacement below half a periodic cell per saved interval; larger motion cannot be recovered.', RuntimeWarning)
+        delta = np.diff(positions, axis=0)
+        for axis, length in enumerate(periodic_length):
+            if length > 0:
+                delta[..., axis] -= length * np.round(delta[..., axis] / length)
+        positions = np.concatenate([positions[:1], positions[:1] + np.cumsum(delta, axis=0)], axis=0)
+    params['coordinate_source'] = coordinates
 
     return SimulationTrajectory(
         positions=positions,
@@ -526,5 +591,6 @@ def load_simulation_data(config_file, input_file=None, vertex_file=None, manual_
         blob_radius=blob_radius,
         sphere_radius=sphere_radius,
         domain_bounds=domain_bounds,
-        metadata=params
+        metadata=params,
+        periodic_lengths=periodic_length
     )

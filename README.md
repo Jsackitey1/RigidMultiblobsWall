@@ -52,6 +52,9 @@ wall are present in subfolders.
 
 For usage see **doc/README.md**.
 
+For automated initial conditions, MP4/HTML visualization, and geometry diagnostics,
+see [Generator and visualization guide](multi_bodies/GENERATOR_AND_VISUALIZATION.md).
+
 ### Requirements
 The current version of the code is compatible with `python 3.8` and `scipy 1.10`.
 

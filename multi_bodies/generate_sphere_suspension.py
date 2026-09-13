@@ -11,6 +11,10 @@ import argparse
 import sys
 import os
 import math
+import json
+import tempfile
+from geometry import bounding_radius, geometry_report
+from visualizer.trajectory_loader import parse_vertex_file
 import numpy as np
 
 # Matplotlib headless backend for plotting
@@ -34,7 +38,7 @@ def calculate_num_spheres(bounds, target_fraction, radius):
   area = Lx * Ly
   sphere_area = math.pi * (radius ** 2)
   N = int(round((target_fraction * area) / sphere_area))
-  return max(1, N)
+  return N
 
 
 def get_periodic_diff(delta, L):
@@ -168,14 +172,38 @@ def check_all_min_distances(positions, periodic_lengths=None):
 
 def generate_sphere_suspension_2d(bounds, target_count=None, target_fraction=None,
                                   radius=1.0, z_fixed=2.0, safety_gap=0.05,
-                                  periodic=False, randomize_quaternions=False, seed=None):
+                                  periodic=False, randomize_quaternions=False, seed=None,
+                                  vertex_blobs=None, blob_radius=None, geometry_mode='ideal-sphere',
+                                  max_retries=3, wall=True, interaction_clearance=0.0):
   '''
   Place non-overlapping spheres in 2D xy-plane at constant height z.
   '''
+  bounds = np.asarray(bounds, dtype=float)
+  if bounds.shape != (4,) or not np.isfinite(bounds).all() or bounds[1] <= bounds[0] or bounds[3] <= bounds[2]:
+    raise ValueError('Box must contain finite, increasing x and y bounds')
+  if not np.isfinite([radius, z_fixed, safety_gap, interaction_clearance]).all() or radius <= 0 or safety_gap < 0 or interaction_clearance < 0:
+    raise ValueError('Radius must be positive; gaps must be nonnegative and finite')
+  if target_count is not None and target_fraction is not None:
+    raise ValueError('Specify either count or area fraction, not both')
+  if target_fraction is not None and (not np.isfinite(target_fraction) or not 0 < target_fraction <= 1):
+    raise ValueError('Area fraction must be in (0, 1]')
+  if target_count is not None and (not isinstance(target_count, (int, np.integer)) or target_count < 1):
+    raise ValueError('Particle count must be a positive integer')
+  if not isinstance(max_retries, int) or max_retries < 1:
+    raise ValueError('max_retries must be a positive integer')
+  if geometry_mode not in ('ideal-sphere', 'bounding-sphere'):
+    raise ValueError('Unknown geometry mode')
+  exclusion_radius = radius
+  if geometry_mode != 'ideal-sphere':
+    if vertex_blobs is None or blob_radius is None:
+      raise ValueError('Multiblob placement requires vertex geometry and blob_radius')
+    exclusion_radius = bounding_radius(vertex_blobs, blob_radius)
+  if wall and geometry_mode == 'ideal-sphere' and z_fixed < radius - 1e-7:
+    raise ValueError('Sphere surface would penetrate the wall')
   if seed is not None:
     np.random.seed(seed)
     
-  min_dist = 2.0 * radius * (1.0 + safety_gap)
+  min_dist = 2.0 * exclusion_radius * (1.0 + safety_gap) + interaction_clearance
   
   if target_count is not None:
     N = target_count
@@ -186,28 +214,45 @@ def generate_sphere_suspension_2d(bounds, target_count=None, target_fraction=Non
     
   Lx = bounds[1] - bounds[0]
   Ly = bounds[3] - bounds[2]
-  periodic_lengths = [Lx, Ly] if periodic else None
+  if N < 1:
+    raise ValueError('Requested area fraction rounds to zero bodies; increase fraction or specify count')
+  periodic_axes = [bool(periodic)] * 2 if isinstance(periodic, (bool, np.bool_)) else list(periodic)
+  if len(periodic_axes) != 2:
+    raise ValueError('periodic must specify x and y')
+  periodic_lengths = [Lx if periodic_axes[0] else 0, Ly if periodic_axes[1] else 0]
+  # Necessary area bound only; passing it does not guarantee finite-box packing.
+  if N * math.pi * exclusion_radius**2 > Lx * Ly + 1e-7:
+    raise ValueError('Excluded disk area exceeds box area')
+  if all(periodic_axes) and N * math.pi * (min_dist/2)**2 / (Lx*Ly) > math.pi/(2*math.sqrt(3)) + 1e-7:
+    raise ValueError('Requested periodic disk packing exceeds the hexagonal packing bound including gaps')
+  if any(L > 0 and L < min_dist - 1e-7 for L in periodic_lengths):
+    raise ValueError('Body exclusion envelope intersects its periodic image')
 
-  # Effective placement bounds (shrunk by radius for hard wall boundaries)
-  if periodic:
-    place_bounds = list(bounds)
+  place_bounds = list(bounds)
+  for axis in range(2):
+    if not periodic_axes[axis]:
+      place_bounds[2*axis] += exclusion_radius
+      place_bounds[2*axis+1] -= exclusion_radius
+    if place_bounds[2*axis] > place_bounds[2*axis+1]:
+      raise ValueError('Body does not fit within placement box')
+
+  for attempt in range(max_retries):
+    positions = place_spheres_rsa(place_bounds, N, min_dist, periodic_lengths)
+    if len(positions) < N:
+      needed = N - len(positions)
+      extra = np.column_stack([np.random.uniform(place_bounds[0], place_bounds[1], needed),
+                               np.random.uniform(place_bounds[2], place_bounds[3], needed)])
+      combined = np.vstack([positions, extra]) if len(positions) else extra
+      positions = relax_dense_suspension(place_bounds, combined, min_dist, periodic_lengths)
+    if positions.shape != (N, 2) or not np.isfinite(positions).all():
+      raise RuntimeError('Placement returned invalid coordinates')
+    inside = all(np.all((positions[:, axis] >= place_bounds[2*axis]-1e-7) &
+                        (positions[:, axis] <= place_bounds[2*axis+1]+1e-7)) for axis in range(2))
+    if inside and check_all_min_distances(positions, periodic_lengths) >= min_dist - 1e-7:
+      break
   else:
-    place_bounds = [bounds[0] + radius, bounds[1] - radius,
-                    bounds[2] + radius, bounds[3] - radius]
+    raise RuntimeError(f'Could not satisfy exclusion distance {min_dist:g} after {max_retries} attempts; no configuration saved')
 
-  # 1. RSA placement
-  positions = place_spheres_rsa(place_bounds, N, min_dist, periodic_lengths)
-  
-  # 2. Dense relaxation if needed
-  if len(positions) < N:
-    needed = N - len(positions)
-    print(f"[*] RSA placed {len(positions)}/{N} spheres. Running relaxation for remaining {needed} spheres...")
-    extra = np.zeros((needed, 2))
-    extra[:, 0] = np.random.uniform(place_bounds[0], place_bounds[1], needed)
-    extra[:, 1] = np.random.uniform(place_bounds[2], place_bounds[3], needed)
-    combined = np.vstack([positions, extra]) if len(positions) > 0 else extra
-    positions = relax_dense_suspension(place_bounds, combined, min_dist, periodic_lengths)
-  
   # Final 3D coordinates (x, y, z_fixed)
   full_coords = np.zeros((N, 3))
   full_coords[:, 0] = positions[:, 0]
@@ -225,6 +270,14 @@ def generate_sphere_suspension_2d(bounds, target_count=None, target_fraction=Non
   else:
     quaternions[:, 0] = 1.0 # identity quaternion
 
+  if vertex_blobs is not None and blob_radius is not None:
+    report = geometry_report(full_coords, quaternions, vertex_blobs, blob_radius, periodic_lengths, wall)
+    if report['bodies_with_wall_penetration']:
+      raise ValueError('Transformed blob surfaces penetrate the wall; increase z_height')
+    if geometry_mode != 'ideal-sphere' and (report['overlapping_interbody_blob_pairs'] or
+        (report['minimum_periodic_self_clearance'] is not None and report['minimum_periodic_self_clearance'] < -1e-7)):
+      raise RuntimeError('Final multiblob geometry validation failed')
+
   achieved_fraction = (N * math.pi * (radius ** 2)) / (Lx * Ly)
   min_d_observed = check_all_min_distances(positions, periodic_lengths)
 
@@ -235,7 +288,13 @@ def save_clones_file(filepath, positions, quaternions):
   '''Write positions and quaternions to *.clones file.'''
   N = len(positions)
   os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
-  with open(filepath, 'w') as f:
+  # Atomic replacement: never leave a partially written configuration.
+  positions = np.asarray(positions, dtype=float)
+  quaternions = np.asarray(quaternions, dtype=float)
+  if positions.shape != (N, 3) or quaternions.shape != (N, 4) or not np.isfinite(positions).all() or not np.isfinite(quaternions).all():
+    raise ValueError('Invalid configuration arrays')
+  with tempfile.NamedTemporaryFile(mode='w', dir=os.path.dirname(os.path.abspath(filepath)), delete=False) as f:
+    temporary = f.name
     f.write('# The format is:\n')
     f.write('# number of rigid bodies\n')
     f.write('# vector_location_body_0  quaternion_body_0\n')
@@ -244,8 +303,9 @@ def save_clones_file(filepath, positions, quaternions):
     for i in range(N):
       x, y, z = positions[i]
       q0, q1, q2, q3 = quaternions[i]
-      f.write(f'{x:.8f}\t{y:.8f}\t{z:.8f}\t{q0:.8f}\t{q1:.8f}\t{q2:.8f}\t{q3:.8f}\n')
+      f.write(f'{x:.17g}\t{y:.17g}\t{z:.17g}\t{q0:.17g}\t{q1:.17g}\t{q2:.17g}\t{q3:.17g}\n')
 
+  os.replace(temporary, filepath)
 
 def plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_target, output_plot):
   '''Generate 2D top-down verification plot with circles drawn to true scale.'''
@@ -298,6 +358,8 @@ def read_suspension_input_file(filepath):
       if line != '':
         parts = line.split(None, 1)
         if len(parts) == 2:
+          if parts[0] == 'structure' and 'structure' in options:
+            raise ValueError('Generator accepts one structure; supply an explicit generator configuration for each body type')
           options[parts[0]] = parts[1].strip()
         elif len(parts) == 1:
           options[parts[0]] = ''
@@ -314,14 +376,14 @@ def main():
                       help="Bounding box: 'xmin xmax ymin ymax' or 'Lx Ly'")
   parser.add_argument('--z-height', type=float, default=None,
                       help="Fixed height z above floor wall (default: 2.0 * radius)")
-  parser.add_argument('--density', '--fraction', dest='fraction', type=float, default=None,
+  parser.add_argument('--area-fraction', '--density', '--fraction', dest='fraction', type=float, default=None,
                       help="Target 2D area fraction (e.g. 0.25)")
   parser.add_argument('--num-bodies', '-N', dest='num_bodies', type=int, default=None,
                       help="Explicit number of spheres to place")
   parser.add_argument('--radius', '-R', type=float, default=None,
-                      help="Sphere hydrodynamic/geometric radius (default: 1.0)")
+                      help="Nominal sphere radius for area fraction (default: 1.0)")
   parser.add_argument('--safety-gap', type=float, default=None,
-                      help="Safety gap buffer fraction above 2R (default: 0.05 -> d_min = 2.1R)")
+                      help="Fractional buffer above the exclusion diameter (default: 0.05)")
   parser.add_argument('--periodic', action='store_true', default=None,
                       help="Enable periodic boundary condition wrapping in x and y")
   parser.add_argument('--output-clones', type=str, default=None,
@@ -333,8 +395,14 @@ def main():
   parser.add_argument('--seed', type=int, default=None,
                       help="Random number generator seed")
   parser.add_argument('--vertex-file', type=str, default=None,
-                      help="Reference vertex file to recommend in inputfile snippet")
+                      help="Vertex geometry used for conservative placement and validation")
 
+  parser.add_argument('--blob-radius', type=float)
+  parser.add_argument('--geometry-mode', choices=['ideal-sphere', 'bounding-sphere'], default=None,
+                      help='Default: conservative bounding-sphere; ideal-sphere explicitly uses nominal radius')
+  parser.add_argument('--max-retries', type=int, default=None)
+  parser.add_argument('--interaction-clearance', type=float, default=None, help='Additional center separation in length units')
+  parser.add_argument('--validation-report', type=str)
   args = parser.parse_args()
 
   # Load options from input file if provided
@@ -368,8 +436,6 @@ def main():
       radius = float(file_opts['radius'])
     elif 'sphere_radius' in file_opts:
       radius = float(file_opts['sphere_radius'])
-    elif 'blob_radius' in file_opts:
-      radius = float(file_opts['blob_radius'])
     else:
       radius = 1.0
 
@@ -381,17 +447,20 @@ def main():
     else:
       z_fixed = 2.0 * radius
 
-  if z_fixed < radius:
-    print(f"[!] Warning: z_height ({z_fixed}) is less than sphere radius ({radius}). Floor wall is at z=0.")
 
   # Resolve density / num_bodies
   fraction = args.fraction
   if fraction is None:
-    if 'density' in file_opts:
+    if 'area_fraction' in file_opts:
+      fraction = float(file_opts['area_fraction'])
+    elif 'density' in file_opts:
       fraction = float(file_opts['density'])
     elif 'fraction' in file_opts:
       fraction = float(file_opts['fraction'])
 
+  # Explicit CLI count/fraction overrides the alternate choice in the file.
+  if args.num_bodies is not None and args.fraction is None:
+    fraction = None
   num_bodies = args.num_bodies
   if num_bodies is None:
     if 'num_bodies' in file_opts:
@@ -399,6 +468,8 @@ def main():
     elif 'N' in file_opts:
       num_bodies = int(file_opts['N'])
 
+  if args.fraction is not None and args.num_bodies is None:
+    num_bodies = None
   if num_bodies is None and fraction is None:
     sys.exit("Error: Must specify either --density/fraction or --num-bodies/N in CLI or input file.")
 
@@ -415,11 +486,36 @@ def main():
   if not periodic and 'periodic' in file_opts:
     periodic = file_opts['periodic'].lower() in ['true', '1', 'yes']
 
+  if 'periodic_length' in file_opts:
+    declared_lengths = [float(v) for v in file_opts['periodic_length'].split()]
+    if len(declared_lengths) < 2 or not np.isfinite(declared_lengths).all() or min(declared_lengths[:2]) < 0:
+      raise ValueError('periodic_length requires nonnegative finite x and y lengths')
+  if args.periodic is None and 'periodic' not in file_opts and 'periodic_length' in file_opts:
+    lengths = [float(v) for v in file_opts['periodic_length'].split()]
+    periodic = [lengths[0] > 0, lengths[1] > 0]
+  if 'periodic_length' in file_opts:
+    lengths = [float(v) for v in file_opts['periodic_length'].split()]
+    axes = [periodic]*2 if isinstance(periodic, bool) else periodic
+    for axis in range(2):
+      if axes[axis] and not np.isclose(lengths[axis], bounds[2*axis+1]-bounds[2*axis]):
+        raise ValueError('Placement box must match periodic_length on periodic axes')
+
   # Resolve outputs
   output_clones = args.output_clones or file_opts.get('output_clones') or 'Structures/generated_spheres.clones'
   plot_image = args.plot_image or file_opts.get('plot_image') or 'data/spheres_plot.png'
   vertex_file = args.vertex_file or file_opts.get('vertex_file') or 'Structures/shell_N_12_Rg_1.vertex'
   
+  if 'structure' in file_opts and args.vertex_file is None and 'vertex_file' not in file_opts:
+    vertex_file = file_opts['structure'].split()[0]
+  if not os.path.exists(vertex_file) and args.input_file:
+    vertex_file = os.path.join(os.path.dirname(os.path.abspath(args.input_file)), vertex_file)
+  geometry_mode = args.geometry_mode or file_opts.get('geometry_mode', 'bounding-sphere')
+  blob_radius = args.blob_radius if args.blob_radius is not None else float(file_opts['blob_radius']) if 'blob_radius' in file_opts else None
+  vertices = parse_vertex_file(vertex_file)
+  if geometry_mode != 'ideal-sphere' and (vertices is None or blob_radius is None):
+    raise ValueError('Bounding-sphere placement requires a valid vertex_file and blob_radius from the simulation input')
+  wall = file_opts.get('domain', 'single_wall') != 'no_wall'
+
   # Resolve random_quaternions
   rand_quat = args.random_quaternions if args.random_quaternions is not None else False
   if not rand_quat and 'random_quaternions' in file_opts:
@@ -434,9 +530,9 @@ def main():
   print("2D Sphere Suspension Generator")
   print("=" * 60)
   print(f"Domain Bounds       : [x: {bounds[0]} -> {bounds[1]}, y: {bounds[2]} -> {bounds[3]}]")
-  print(f"Sphere Radius (R)   : {radius}")
+  print(f"Nominal Radius (R)  : {radius}")
   print(f"Fixed Z Height      : {z_fixed}")
-  print(f"Safety Gap Buffer   : {safety_gap * 100:.1f}% -> d_min = {2.0 * radius * (1.0 + safety_gap):.4f}")
+  print(f"Safety Gap Buffer   : {safety_gap * 100:.1f}% of exclusion diameter")
   print(f"Periodic Boundaries : {periodic}")
 
   # Generate positions
@@ -449,7 +545,11 @@ def main():
     safety_gap=safety_gap,
     periodic=periodic,
     randomize_quaternions=rand_quat,
-    seed=seed
+    seed=seed,
+    vertex_blobs=vertices, blob_radius=blob_radius, geometry_mode=geometry_mode,
+    max_retries=args.max_retries if args.max_retries is not None else int(file_opts.get('max_retries', 3)),
+    wall=wall,
+    interaction_clearance=args.interaction_clearance if args.interaction_clearance is not None else float(file_opts.get('interaction_clearance', 0))
   )
 
   N = len(positions)
@@ -459,26 +559,45 @@ def main():
   print(f"Min Distance Found  : {min_d:.4f} (Required >= {min_target:.4f})")
   
   if min_d >= min_target - 1e-6:
-    print("[SUCCESS] All spheres strictly obey non-overlapping criteria!")
+    print("[SUCCESS] Configuration satisfies the selected exclusion policy!")
   else:
-    print("[WARNING] Some spheres have distance close to cutoff. Consider increasing domain size.")
+    raise RuntimeError("Final center separation check failed")
+
+  if min_d < min_target - 1e-7:
+    raise RuntimeError('Final separation validation failed; no configuration saved')
+  lengths = [bounds[1]-bounds[0], bounds[3]-bounds[2]]
+  axes = [periodic]*2 if isinstance(periodic, bool) else periodic
+  lengths = [L if enabled else 0 for L, enabled in zip(lengths, axes)]
+  report = geometry_report(positions, quaternions, vertices, blob_radius, lengths, wall) if vertices is not None and blob_radius is not None else {}
+  report.update({'placement_policy': geometry_mode, 'nominal_radius': radius,
+                 'bounding_radius': bounding_radius(vertices, blob_radius) if vertices is not None and blob_radius is not None else None,
+                 'blob_radius': blob_radius, 'seed': seed, 'num_bodies': N,
+                 'requested_area_fraction': fraction, 'achieved_nominal_area_fraction': achieved_fraction,
+                 'number_density': N / ((bounds[1]-bounds[0])*(bounds[3]-bounds[2])),
+                 'minimum_center_distance': min_d if np.isfinite(min_d) else None,
+                 'required_center_distance': min_target, 'status': 'valid_under_placement_policy'})
 
   # Save clones file
   save_clones_file(output_clones, positions, quaternions)
   print(f"[+] Output clones file saved to: {output_clones}")
 
+  report_path = args.validation_report or output_clones + '.validation.json'
+  os.makedirs(os.path.dirname(os.path.abspath(report_path)), exist_ok=True)
+  with open(report_path, 'w') as f:
+    json.dump(report, f, indent=2, allow_nan=False)
+  print(f'[+] Validation report saved to: {report_path}')
+
   # Plot image
   if plot_image:
-    plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_target, plot_image)
+    plot_suspension_2d(bounds, positions, radius if geometry_mode == 'ideal-sphere' else bounding_radius(vertices, blob_radius), achieved_fraction, min_d, min_target, plot_image)
 
   # Print inputfile snippet
   print("=" * 60)
   print("HOW TO USE IN YOUR SIMULATION:")
   print(f"Add this line to your multi_bodies inputfile (e.g. inputfile_dynamic.dat):")
   print(f"structure {vertex_file} {output_clones}")
-  if periodic:
-    Lx = bounds[1] - bounds[0]
-    Ly = bounds[3] - bounds[2]
+  if any(lengths):
+    Lx, Ly = lengths
     print(f"periodic_length {Lx:.1f} {Ly:.1f} 0.0")
   print("=" * 60)
 

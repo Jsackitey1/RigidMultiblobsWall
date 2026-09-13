@@ -9,10 +9,10 @@ Usage:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode all
 
   # Generate only the Spheres video:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode spheres --duration 8.0 --fps 24
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode spheres --duration 20 --fps 30
 
   # Generate only the Multi-Blobs video:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode blobs --duration 8.0 --fps 24
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode blobs --duration 20 --fps 30
 
   # Generate only the Interactive 2D HTML player:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode html
@@ -21,6 +21,7 @@ Usage:
 import os
 import sys
 import argparse
+import numpy as np
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -47,10 +48,10 @@ def main():
                         help='Visualization mode: spheres, blobs, html, or all (default: all)')
     parser.add_argument('--radius', '-r', type=float, default=None,
                         help='Particle radius override (optional, auto-computed from vertex file by default)')
-    parser.add_argument('--duration', '-d', type=float, default=10.0,
-                        help='Target video and HTML playback duration in seconds (default: 10.0s)')
-    parser.add_argument('--fps', type=int, default=24,
-                        help='Video frame rate for smooth playback (default: 24 fps)')
+    parser.add_argument('--duration', '-d', type=float, default=20.0,
+                        help='Target video and HTML playback duration in seconds (default: 20.0s)')
+    parser.add_argument('--fps', type=int, default=30,
+                        help='Video frame rate for smooth playback (default: 30 fps)')
     parser.add_argument('--output-dir', '-o', type=str, default='data/visualizations',
                         help='Output directory for generated MP4 videos and HTML (default: data/visualizations)')
     parser.add_argument('--no-interpolate', action='store_true',
@@ -60,7 +61,13 @@ def main():
     parser.add_argument('--no-vectors', action='store_true',
                         help='Disable velocity vectors in spheres view')
 
+    parser.add_argument('--structure-index', type=int, default=None, help='Structure corresponding to the selected config')
+    parser.add_argument('--timestamps', help='Text file containing one timestamp per saved frame')
+    parser.add_argument('--coordinates', choices=['unwrapped', 'wrapped'], default='unwrapped', help='Solver output convention; wrapped reconstruction assumes less than half-cell motion per interval')
+    parser.add_argument('--diagnostic-plots', action='store_true', help='Add raw-frame X-Z/height plots and periodic projected g(r)')
     args = parser.parse_args()
+    if not np.isfinite(args.duration) or args.duration <= 0 or args.fps <= 0:
+        parser.error('--duration and --fps must be positive and finite')
 
     # Resolve config file path
     config_file = args.config
@@ -69,18 +76,17 @@ def main():
             from visualizer.trajectory_loader import parse_input_file
             opts = parse_input_file(args.input_file)
             out_prefix = opts.get('output_name', 'data/run')
-            struct_str = opts.get('structure0', '')
+            if args.structure_index is None and 'structure1' in opts:
+                sys.exit('Multiple structures: specify --structure-index and the corresponding --config if needed')
+            struct_str = opts.get('structure' + str(args.structure_index or 0), '')
             struct_name = 'generated_spheres'
             if struct_str:
-                clones_path = struct_str.split()[-1]
+                clones_path = struct_str.split()[1]
                 clones_base = os.path.basename(clones_path)
                 if clones_base.endswith('.clones'):
                     struct_name = clones_base[:-7]
-            candidate = f"{out_prefix}.{struct_name}.config"
-            if os.path.exists(candidate):
-                config_file = candidate
-            else:
-                config_file = 'data/run.generated_spheres.config'
+            # Never substitute another run when the selected trajectory is absent.
+            config_file = f"{out_prefix}.{struct_name}.config"
         else:
             config_file = 'data/run.generated_spheres.config'
 
@@ -103,30 +109,36 @@ def main():
         config_file,
         input_file=args.input_file,
         vertex_file=args.vertex_file,
-        manual_radius=args.radius
+        manual_radius=args.radius,
+        structure_index=args.structure_index,
+        timestamps=np.loadtxt(args.timestamps, ndmin=1) if args.timestamps else None,
+        coordinates=args.coordinates
     )
     print(f"[+] Loaded simulation: {raw_traj.num_frames} raw frames, {raw_traj.num_bodies} bodies, {raw_traj.num_blobs_per_body} blobs/body.")
-    print(f"[+] Resolved Body Radius: R = {raw_traj.sphere_radius:.4f} (Blob Radius a = {raw_traj.blob_radius:.4f})")
+    print(f"[+] Display Envelope Radius: R = {raw_traj.sphere_radius:.4f} (Blob Radius a = {raw_traj.blob_radius:.4f})")
     print(f"[+] Domain Envelope: [x: {raw_traj.domain_bounds[0]:.1f} -> {raw_traj.domain_bounds[1]:.1f}, y: {raw_traj.domain_bounds[2]:.1f} -> {raw_traj.domain_bounds[3]:.1f}]")
-    print(f"[+] Physical Duration: {raw_traj.time_array[-1]:.3f} s (dt = {raw_traj.dt:.4f} s)")
+    print(f"[+] Physical Duration: {raw_traj.time_array[-1] - raw_traj.time_array[0]:.3f} s (dt = {raw_traj.dt:.4f} s)")
+
+    from visualizer.diagnostics import write_diagnostics
+    diagnostic_files = write_diagnostics(raw_traj, args.output_dir, plots=args.diagnostic_plots)
 
     # 2. Smooth SLERP Sub-Frame Interpolation for Longer Video Duration
     if not args.no_interpolate and raw_traj.num_frames > 1:
         traj = raw_traj.get_interpolated_trajectory(target_duration=args.duration, fps=args.fps)
-        print(f"[+] Interpolated to {traj.num_frames} smooth frames ({args.fps} fps -> {args.duration:.1f}s video duration).")
+        print(f"[+] Prepared {traj.num_frames} animation frames ({args.fps} fps -> {traj.num_frames / args.fps:.2f}s MP4 duration).")
     else:
         traj = raw_traj
         print(f"[!] Rendering {traj.num_frames} raw frames directly without interpolation.")
 
     os.makedirs(args.output_dir, exist_ok=True)
-    generated_all = []
+    generated_all = list(diagnostic_files)
 
     # 1. 2D Spheres / Bodies Video
     if args.mode in ['spheres', 'all']:
         print("\n--- 1. Generating 2D Spheres Suspension Video ---")
         spheres_path = os.path.join(args.output_dir, 'spheres_simulation.mp4')
         out_spheres = render_2d_video(traj, spheres_path, mode='spheres',
-                                      fps=args.fps, show_vectors=not args.no_vectors,
+                                      fps=args.fps, target_duration=args.duration if not args.no_interpolate else None, show_vectors=not args.no_vectors,
                                       show_trails=not args.no_trails)
         generated_all.extend(out_spheres)
 
@@ -135,7 +147,7 @@ def main():
         print("\n--- 2. Generating 2D Multi-Blobs Discretization Video ---")
         blobs_path = os.path.join(args.output_dir, 'multiblobs_simulation.mp4')
         out_blobs = render_2d_video(traj, blobs_path, mode='blobs',
-                                    fps=args.fps, show_vectors=False,
+                                    fps=args.fps, target_duration=args.duration if not args.no_interpolate else None, show_vectors=False,
                                     show_trails=not args.no_trails)
         generated_all.extend(out_blobs)
 

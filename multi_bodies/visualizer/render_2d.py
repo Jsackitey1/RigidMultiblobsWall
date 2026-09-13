@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
 
+from geometry import periodic_copies
+
 from .video_writer import save_video, VideoStreamWriter
 
 
@@ -58,11 +60,26 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     xmin, xmax = traj.domain_bounds[0], traj.domain_bounds[1]
     ymin, ymax = traj.domain_bounds[2], traj.domain_bounds[3]
 
+    display_ids = []
+    display_positions = []
+    for i, center in enumerate(pos):
+        for offset in periodic_copies(center, max(R, traj.bounding_radius), traj.periodic_lengths, traj.domain_bounds):
+            display_ids.append(i)
+            display_positions.append(center + offset)
+    display_ids = np.asarray(display_ids, dtype=int)
+    display_positions = np.asarray(display_positions).reshape(-1, 3)
+
     # --- Draw Trajectory Trails ---
     if show_trails and frame_idx > 0:
         start_t = max(0, frame_idx - trail_length)
         for b in range(traj.num_bodies):
-            trail = traj.positions[start_t:frame_idx + 1, b]
+            trail = traj.positions[start_t:frame_idx + 1, b].copy()
+            jumps = np.zeros(max(0, len(trail)-1), dtype=bool)
+            for axis, length in enumerate(traj.periodic_lengths):
+                if length > 0:
+                    jumps |= np.abs(np.diff(trail[:, axis])) > length/2
+            # Inserting NaNs splits boundary crossings without false box-spanning lines.
+            trail = np.insert(trail, np.flatnonzero(jumps)+1, np.nan, axis=0)
             ax.plot(trail[:, 0], trail[:, 1], color='#38bdf8', alpha=0.35, linewidth=1.2, zorder=2)
 
     # --- Color Mapping ---
@@ -70,7 +87,7 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
         max_speed = max(np.max(traj.speeds), 0.01)
         c_vals = speeds
         cmap = 'plasma'
-        c_label = 'Translational Speed $|v|$'
+        c_label = 'Frame-to-frame displacement rate'
         norm = plt.Normalize(vmin=0, vmax=max_speed)
     elif color_by == 'index':
         c_vals = np.arange(traj.num_bodies)
@@ -90,6 +107,9 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     # --- Mode: 2D Discs + Orientation Director Pointers ---
     if mode == 'spheres':
         # Bug 6: Sort by ascending z for correct depth ordering (painter's algorithm)
+        pos = display_positions
+        c_vals = c_vals[display_ids]
+        angles = angles[display_ids]
         z_order = np.argsort(pos[:, 2])
 
         patches = []
@@ -112,7 +132,7 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
 
         # Velocity vectors
         if show_vectors and traj.num_frames > 1:
-            vels = traj.velocities[frame_idx]
+            vels = traj.displacement_rate[frame_idx][display_ids]
             v_max = max(np.max(traj.speeds), 1e-4)
             scale_factor = R / (v_max * 2.0)
             ax.quiver(pos[:, 0], pos[:, 1], vels[:, 0] * scale_factor, vels[:, 1] * scale_factor,
@@ -123,6 +143,8 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
         all_blobs = traj.get_blobs_for_frame(frame_idx)
         if all_blobs is not None:
             a = traj.blob_radius
+            all_blobs = np.array([center + offset for center in all_blobs
+                                  for offset in periodic_copies(center, a, traj.periodic_lengths, traj.domain_bounds)])
             # Bug 6: Sort blobs by ascending z for correct depth ordering
             blob_z_order = np.argsort(all_blobs[:, 2])
             blob_patches = []
@@ -146,8 +168,8 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
 
     # Axis and Domain Formatting
     pad = R * 1.5
-    ax.set_xlim(xmin - pad, xmax + pad)
-    ax.set_ylim(ymin - pad, ymax + pad)
+    ax.set_xlim(xmin if traj.periodic_lengths[0] else xmin-pad, xmax if traj.periodic_lengths[0] else xmax+pad)
+    ax.set_ylim(ymin if traj.periodic_lengths[1] else ymin-pad, ymax if traj.periodic_lengths[1] else ymax+pad)
     ax.set_aspect('equal', adjustable='box')
     ax.grid(True, linestyle='--', color='#1f2937', alpha=0.6)
 
@@ -156,7 +178,7 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     ax.set_ylabel('Y Coordinate', color=text_color, fontsize=11)
     ax.tick_params(colors=text_color, labelsize=9)
 
-    mode_title = f"2D Rigid Bodies Suspension (Radius R={R:.2f})" if mode == 'spheres' else f"2D Constituent Multi-Blobs (Blob Radius a={traj.blob_radius:.2f})"
+    mode_title = f"2D Body Envelopes (Display radius R={R:.2f})" if mode == 'spheres' else f"2D Constituent Multi-Blobs (Blob Radius a={traj.blob_radius:.2f})"
     title = (f"{mode_title}\n"
              f"Time: {t_curr:.3f} s  |  Frame: {frame_idx + 1}/{traj.num_frames}  |  "
              f"Bodies: {traj.num_bodies}  |  Mean $\\langle z \\rangle$: {traj.mean_z[frame_idx]:.4f}")
@@ -168,8 +190,8 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     return rgba[:, :, :3].copy()
 
 
-def render_2d_video(traj, output_path, mode='spheres', fps=24, 
-                    show_vectors=True, show_trails=True, show_progress=True):
+def render_2d_video(traj, output_path, mode='spheres', fps=30,
+                    show_vectors=True, show_trails=True, show_progress=True, target_duration=None):
     '''
     Generate a 2D simulation MP4 video for spheres or multiblobs.
     Streams frames directly to disk to avoid buffering the entire video in RAM.
@@ -187,19 +209,22 @@ def render_2d_video(traj, output_path, mode='spheres', fps=24,
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
+    frame_count = traj.num_frames
+    if target_duration is not None and traj.num_frames == 1:
+        frame_count = max(1, int(round(target_duration * fps)))
     if show_progress:
-        print(f"[*] Rendering {traj.num_frames} 2D frames (mode={mode})...")
+        print(f"[*] Rendering {frame_count} 2D frames (mode={mode})...")
 
     fig = plt.figure(figsize=(10, 10), dpi=100, facecolor='#0b0f19')
 
     # Bug 7: Stream frames directly to disk instead of buffering in RAM
     with VideoStreamWriter(output_path, fps=fps) as writer:
-        for i in range(traj.num_frames):
-            frame = render_2d_frame(traj, i, fig=fig, mode=mode,
+        for i in range(frame_count):
+            frame = render_2d_frame(traj, min(i, traj.num_frames-1), fig=fig, mode=mode,
                                     show_vectors=show_vectors, show_trails=show_trails)
             writer.write_frame(frame)
             if show_progress:
-                print(f"    Rendered 2D frame {i+1}/{traj.num_frames}", end='\r')
+                print(f"    Rendered 2D frame {i+1}/{frame_count}", end='\r')
 
     plt.close(fig)
     if show_progress:

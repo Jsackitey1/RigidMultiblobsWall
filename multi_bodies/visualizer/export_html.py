@@ -7,12 +7,13 @@ import os
 import json
 import math
 import numpy as np
+from geometry import periodic_copies
 
 
-def export_interactive_html(traj, output_path, target_duration=10.0):
+def export_interactive_html(traj, output_path, target_duration=20.0):
     '''
     Export self-contained 2D HTML5 Canvas interactive simulation player.
-    target_duration: Target playback length in seconds (default: 10.0s).
+    target_duration: Target playback length in seconds (default: 20.0s).
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
@@ -35,12 +36,21 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
     frames_data = []
     for f in range(traj.num_frames):
         pos_f = traj.positions[f].round(4).tolist()
-        quat_f = traj.quaternions[f].round(4).tolist()
+        quat_f = traj.quaternions[f].round(12).tolist()
         speeds_f = traj.speeds[f].round(4).tolist()
         angles_f = traj.get_inplane_orientation_angles(f).round(4).tolist()
         # Minor: removed dead velocities payload — never read by JS
 
+        display = [(i, (center+offset).round(6).tolist()) for i, center in enumerate(traj.positions[f])
+                   for offset in periodic_copies(center, max(traj.sphere_radius, traj.bounding_radius),
+                                                 traj.periodic_lengths, traj.domain_bounds)]
         frames_data.append({
+            'side_bodies': [(center+offset).tolist() for center in traj.positions[f]
+                            for offset in periodic_copies(center, traj.sphere_radius, [traj.periodic_lengths[0], 0], traj.domain_bounds)],
+            'side_blobs': [(center+offset).tolist() for center in (traj.get_blobs_for_frame(f) if traj.vertex_blobs is not None else [])
+                           for offset in periodic_copies(center, traj.blob_radius, [traj.periodic_lengths[0], 0], traj.domain_bounds)],
+            'display_ids': [item[0] for item in display],
+            'display_positions': [item[1] for item in display],
             'time': round(float(traj.time_array[f]), 4),
             'mean_z': round(float(traj.mean_z[f]), 4),
             'positions': pos_f,
@@ -52,6 +62,10 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
     vertex_blobs_list = traj.vertex_blobs.round(4).tolist() if traj.vertex_blobs is not None else []
 
     sim_payload = {
+        'periodic_lengths': traj.periodic_lengths.tolist(),
+        'interpolated_for_visualization': bool(traj.metadata.get('interpolated_for_visualization', False)),
+        'wall_enabled': traj.metadata.get('domain', 'single_wall') != 'no_wall',
+        'rate_label': 'Frame-to-frame displacement rate',
         'num_frames': traj.num_frames,
         'num_bodies': traj.num_bodies,
         'sphere_radius': float(traj.sphere_radius),
@@ -226,6 +240,8 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             <div class="hud-stat">Frame: <span id="stat-frame">1</span> / <span id="stat-total-frames">{traj.num_frames}</span></div>
             <div class="hud-stat">Duration: <span id="stat-duration">{target_duration:.1f}</span> s</div>
             <div class="hud-stat">Active Bodies: <span>{traj.num_bodies}</span></div>
+            <div class="hud-stat">{'Animation interpolation; measurements use saved frames' if traj.metadata.get('interpolated_for_visualization') else 'Saved simulation frames'}</div>
+            <div class="hud-stat">Display envelope R={traj.sphere_radius:.4g}; blob a={traj.blob_radius:.4g}</div>
             <div class="hud-stat">Mean Height ⟨z⟩: <span id="stat-mean-z">0.000</span></div>
         </div>
 
@@ -353,8 +369,9 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
 
         function drawTopDown(targetCtx, w, h, cam) {{
             const frame = simData.frames[currentFrame];
-            const pos = frame.positions;
-            const angles = frame.angles;
+            const pos = frame.display_positions;
+            const ids = frame.display_ids;
+            const angles = ids.map(i => frame.angles[i]);
 
             // Draw domain boundary box
             const tl = worldToScreen(xmin, ymax, w, h, cam);
@@ -384,10 +401,20 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                 targetCtx.stroke();
             }}
 
+            targetCtx.save();
+            if (simData.periodic_lengths.some(L => L > 0)) {{
+                const clipLeft = simData.periodic_lengths[0] > 0 ? tl.x : 0;
+                const clipRight = simData.periodic_lengths[0] > 0 ? br.x : w;
+                const clipTop = simData.periodic_lengths[1] > 0 ? tl.y : 0;
+                const clipBottom = simData.periodic_lengths[1] > 0 ? br.y : h;
+                targetCtx.beginPath();
+                targetCtx.rect(clipLeft, clipTop, clipRight-clipLeft, clipBottom-clipTop);
+                targetCtx.clip();
+            }}
             // Draw bodies / blobs
             if (renderMode === 'spheres') {{
                 // Bug 6: Sort bodies by ascending z for correct depth ordering
-                const indices = Array.from({{length: numBodies}}, (_, i) => i);
+                const indices = Array.from({{length: pos.length}}, (_, i) => i);
                 indices.sort((a, b) => pos[a][2] - pos[b][2]);
 
                 for (const i of indices) {{
@@ -426,12 +453,12 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                 const quats = frame.quaternions;
 
                 // Bug 6: Sort bodies by ascending z for correct depth ordering
-                const indices = Array.from({{length: numBodies}}, (_, i) => i);
+                const indices = Array.from({{length: pos.length}}, (_, i) => i);
                 indices.sort((a, b) => pos[a][2] - pos[b][2]);
 
                 for (const i of indices) {{
                     const [bx, by, bz] = pos[i];
-                    const q = quats[i];
+                    const q = quats[ids[i]];
                     const q0 = q[0], q1 = q[1], q2 = q[2], q3 = q[3];
                     const diag = q0 * q0 - 0.5;
 
@@ -478,12 +505,15 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
                     targetCtx.fill();
                 }}
             }}
+            targetCtx.restore();
         }}
 
         function drawSideElevation(targetCtx, w, h, cam) {{
             const frame = simData.frames[currentFrame];
-            const pos = frame.positions;
+            const pos = renderMode === 'blobs' && frame.side_blobs.length ? frame.side_blobs : frame.side_bodies;
+            const sideRadius = renderMode === 'blobs' && frame.side_blobs.length ? blobRadius : R;
 
+            if (simData.wall_enabled) {{
             // Floor Wall at z = 0
             const pWallL = worldToScreen(xmin - 4*R, 0, w, h, cam);
             const pWallR = worldToScreen(xmax + 4*R, 0, w, h, cam);
@@ -494,7 +524,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             targetCtx.lineTo(pWallR.x, pWallR.y);
             targetCtx.stroke();
 
-            // Contact Clearance at z = R
+            // Conservative display envelope reference, not an exact contact surface
             const pContL = worldToScreen(xmin - 4*R, R, w, h, cam);
             const pContR = worldToScreen(xmax + 4*R, R, w, h, cam);
             targetCtx.strokeStyle = '#fbbf24';
@@ -506,15 +536,22 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             targetCtx.stroke();
             targetCtx.setLineDash([]);
 
+            }}
+            targetCtx.save();
+            if (simData.periodic_lengths[0] > 0) {{
+                const left = worldToScreen(xmin, 0, w, h, cam).x;
+                const right = worldToScreen(xmax, 0, w, h, cam).x;
+                targetCtx.beginPath(); targetCtx.rect(left, 0, right-left, h); targetCtx.clip();
+            }}
             // Draw sphere circles in X-Z
             // Bug 6: Sort by ascending y (depth into screen) for side view
-            const indices = Array.from({{length: numBodies}}, (_, i) => i);
+            const indices = Array.from({{length: pos.length}}, (_, i) => i);
             indices.sort((a, b) => pos[a][1] - pos[b][1]);
 
             for (const i of indices) {{
                 const [bx, by, bz] = pos[i];
                 const sp = worldToScreen(bx, bz, w, h, cam);
-                const sRadius = R * cam.scale;
+                const sRadius = sideRadius * cam.scale;
 
                 targetCtx.beginPath();
                 targetCtx.arc(sp.x, sp.y, sRadius, 0, Math.PI * 2);
@@ -539,6 +576,7 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             targetCtx.moveTo(pMeanL.x, pMeanL.y);
             targetCtx.lineTo(pMeanR.x, pMeanR.y);
             targetCtx.stroke();
+            targetCtx.restore();
         }}
 
         function draw() {{
@@ -668,8 +706,8 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             lastTimestamp = timestamp;
 
             if (isPlaying && numFrames > 1) {{
-                const targetDuration = simData.target_duration || 10.0;
-                const playbackFPS = numFrames / Math.max(1.0, targetDuration);
+                const targetDuration = simData.target_duration || 20.0;
+                const playbackFPS = numFrames / targetDuration;
                 accumulator += dt * playbackFPS * playSpeed;
                 if (accumulator >= 1.0) {{
                     const steps = Math.floor(accumulator);
