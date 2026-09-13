@@ -21,6 +21,7 @@ Usage:
 import os
 import sys
 import argparse
+import numpy as np
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -60,6 +61,10 @@ def main():
     parser.add_argument('--no-vectors', action='store_true',
                         help='Disable velocity vectors in spheres view')
 
+    parser.add_argument('--structure-index', type=int, default=None, help='Structure corresponding to the selected config')
+    parser.add_argument('--timestamps', help='Text file containing one timestamp per saved frame')
+    parser.add_argument('--coordinates', choices=['unwrapped', 'wrapped'], default='unwrapped', help='Solver output convention; wrapped reconstruction assumes less than half-cell motion per interval')
+    parser.add_argument('--diagnostic-plots', action='store_true', help='Add raw-frame X-Z/height plots and periodic projected g(r)')
     args = parser.parse_args()
 
     # Resolve config file path
@@ -69,10 +74,12 @@ def main():
             from visualizer.trajectory_loader import parse_input_file
             opts = parse_input_file(args.input_file)
             out_prefix = opts.get('output_name', 'data/run')
-            struct_str = opts.get('structure0', '')
+            if args.structure_index is None and 'structure1' in opts:
+                sys.exit('Multiple structures: specify --structure-index and the corresponding --config if needed')
+            struct_str = opts.get('structure' + str(args.structure_index or 0), '')
             struct_name = 'generated_spheres'
             if struct_str:
-                clones_path = struct_str.split()[-1]
+                clones_path = struct_str.split()[1]
                 clones_base = os.path.basename(clones_path)
                 if clones_base.endswith('.clones'):
                     struct_name = clones_base[:-7]
@@ -103,23 +110,29 @@ def main():
         config_file,
         input_file=args.input_file,
         vertex_file=args.vertex_file,
-        manual_radius=args.radius
+        manual_radius=args.radius,
+        structure_index=args.structure_index,
+        timestamps=np.loadtxt(args.timestamps, ndmin=1) if args.timestamps else None,
+        coordinates=args.coordinates
     )
     print(f"[+] Loaded simulation: {raw_traj.num_frames} raw frames, {raw_traj.num_bodies} bodies, {raw_traj.num_blobs_per_body} blobs/body.")
-    print(f"[+] Resolved Body Radius: R = {raw_traj.sphere_radius:.4f} (Blob Radius a = {raw_traj.blob_radius:.4f})")
+    print(f"[+] Display Envelope Radius: R = {raw_traj.sphere_radius:.4f} (Blob Radius a = {raw_traj.blob_radius:.4f})")
     print(f"[+] Domain Envelope: [x: {raw_traj.domain_bounds[0]:.1f} -> {raw_traj.domain_bounds[1]:.1f}, y: {raw_traj.domain_bounds[2]:.1f} -> {raw_traj.domain_bounds[3]:.1f}]")
-    print(f"[+] Physical Duration: {raw_traj.time_array[-1]:.3f} s (dt = {raw_traj.dt:.4f} s)")
+    print(f"[+] Physical Duration: {raw_traj.time_array[-1] - raw_traj.time_array[0]:.3f} s (dt = {raw_traj.dt:.4f} s)")
+
+    from visualizer.diagnostics import write_diagnostics
+    diagnostic_files = write_diagnostics(raw_traj, args.output_dir, plots=args.diagnostic_plots)
 
     # 2. Smooth SLERP Sub-Frame Interpolation for Longer Video Duration
     if not args.no_interpolate and raw_traj.num_frames > 1:
         traj = raw_traj.get_interpolated_trajectory(target_duration=args.duration, fps=args.fps)
-        print(f"[+] Interpolated to {traj.num_frames} smooth frames ({args.fps} fps -> {args.duration:.1f}s video duration).")
+        print(f"[+] Prepared {traj.num_frames} animation frames ({args.fps} fps -> {traj.num_frames / args.fps:.2f}s MP4 duration).")
     else:
         traj = raw_traj
         print(f"[!] Rendering {traj.num_frames} raw frames directly without interpolation.")
 
     os.makedirs(args.output_dir, exist_ok=True)
-    generated_all = []
+    generated_all = list(diagnostic_files)
 
     # 1. 2D Spheres / Bodies Video
     if args.mode in ['spheres', 'all']:

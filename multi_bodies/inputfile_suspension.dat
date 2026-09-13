@@ -14,7 +14,7 @@ z_height                                 2.0
 # Alternatively, specify exact number of spheres instead of density:
 num_bodies                             50
 
-# Sphere hydrodynamic radius
+# Nominal radius used to report area fraction
 radius                                   1.0
 
 # Safety distance buffer fraction above 2R (e.g. 0.05 -> d_min = 2.1R)
@@ -29,3 +29,7 @@ plot_image                               data/spheres_plot.png
 
 # Reference vertex template file
 vertex_file                              Structures/shell_N_12_Rg_1.vertex
+
+# Match the dynamics input; exclusion uses the full multiblob envelope.
+blob_radius 0.25
+geometry_mode bounding-sphere
