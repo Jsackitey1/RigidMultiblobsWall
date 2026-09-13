@@ -10,10 +10,10 @@ import numpy as np
 from geometry import periodic_copies
 
 
-def export_interactive_html(traj, output_path, target_duration=10.0):
+def export_interactive_html(traj, output_path, target_duration=20.0):
     '''
     Export self-contained 2D HTML5 Canvas interactive simulation player.
-    target_duration: Target playback length in seconds (default: 10.0s).
+    target_duration: Target playback length in seconds (default: 20.0s).
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
@@ -706,8 +706,8 @@ def export_interactive_html(traj, output_path, target_duration=10.0):
             lastTimestamp = timestamp;
 
             if (isPlaying && numFrames > 1) {{
-                const targetDuration = simData.target_duration || 10.0;
-                const playbackFPS = numFrames / Math.max(1.0, targetDuration);
+                const targetDuration = simData.target_duration || 20.0;
+                const playbackFPS = numFrames / targetDuration;
                 accumulator += dt * playbackFPS * playSpeed;
                 if (accumulator >= 1.0) {{
                     const steps = Math.floor(accumulator);

@@ -41,6 +41,21 @@ class TrajectoryPhysics(unittest.TestCase):
         self.assertTrue(animation.metadata['interpolated_for_visualization'])
         self.assertNotIn('interpolated_for_visualization', t.metadata)
 
+    def test_default_presentation_timing(self):
+        raw = trajectory([0, 1, 4])
+        animation = raw.get_interpolated_trajectory()
+        self.assertEqual(animation.num_frames, 600)
+        self.assertEqual(animation.num_frames / 30, 20)
+        np.testing.assert_allclose(animation.positions_unwrapped[[0,-1]], raw.positions_unwrapped[[0,-1]])
+
+    def test_dense_output_resampled_to_requested_duration(self):
+        raw = trajectory(np.linspace(0, 10, 1001), np.linspace(0, 1, 1001))
+        animation = raw.get_interpolated_trajectory()
+        self.assertEqual(animation.num_frames, 600)
+        np.testing.assert_allclose(animation.positions_unwrapped[:,0,0], 10*animation.time_array)
+        self.assertEqual(raw.num_frames, 1001)
+        self.assertAlmostEqual(raw.msd[-1], 100)
+
     def test_irregular_times(self):
         t = trajectory([0, 2, 6], [0, 1, 3])
         np.testing.assert_allclose(t.displacement_rate[:, 0, 0], 2)
@@ -178,6 +193,15 @@ class GeneratorPhysics(unittest.TestCase):
 
 
 class RenderingPhysics(unittest.TestCase):
+    def test_single_frame_video_duration(self):
+        from visualizer.render_2d import render_2d_video
+        with tempfile.TemporaryDirectory() as d, \
+             patch('visualizer.render_2d.VideoStreamWriter') as writer, \
+             patch('visualizer.render_2d.render_2d_frame', return_value=np.zeros((2,2,3), dtype=np.uint8)):
+            render_2d_video(trajectory([0]), os.path.join(d, 'static.mp4'), fps=30,
+                            target_duration=20, show_progress=False)
+            self.assertEqual(writer.return_value.__enter__.return_value.write_frame.call_count, 600)
+
     def test_corner_copies(self):
         copies = periodic_copies([.1,.1,2], 1, [20,20], [0,20,0,20])
         self.assertEqual(len(copies), 4)

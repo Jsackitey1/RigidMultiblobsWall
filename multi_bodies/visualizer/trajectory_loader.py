@@ -230,20 +230,20 @@ class SimulationTrajectory:
         disp = self.positions_unwrapped - self.positions_unwrapped[0:1]
         self.msd = np.mean(np.sum(disp**2, axis=-1), axis=-1)
 
-    def get_interpolated_trajectory(self, target_duration=8.0, fps=24):
+    def get_interpolated_trajectory(self, target_duration=20.0, fps=30):
         '''
-        Generate a smoothly interpolated trajectory suitable for higher FPS and longer video playback.
-        target_duration: Target video length in seconds (e.g. 8.0s)
-        fps: Target frames per second (e.g. 24 fps -> 192 total frames)
+        Generate a smoothly interpolated trajectory suitable for the requested playback duration and FPS.
+        target_duration: Target video length in seconds (default: 20.0s)
+        fps: Target frames per second (default: 30 fps -> 600 total frames)
         '''
         if not np.isfinite(target_duration) or target_duration <= 0 or not np.isfinite(fps) or fps <= 0:
             raise ValueError('Playback duration and fps must be positive')
         if self.num_frames <= 1:
             return self
 
-        total_target_frames = max(self.num_frames, int(round(target_duration * fps)))
-        if total_target_frames == self.num_frames:
-            return self
+        total_target_frames = int(round(target_duration * fps))
+        if total_target_frames < 2:
+            raise ValueError('Duration and fps must allow at least two frames to preserve both endpoints')
 
         # Original frame timestamps normalized in [0, 1]
         orig_indices = (self.time_array - self.time_array[0]) / (self.time_array[-1] - self.time_array[0])

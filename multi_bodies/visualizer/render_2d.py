@@ -190,8 +190,8 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     return rgba[:, :, :3].copy()
 
 
-def render_2d_video(traj, output_path, mode='spheres', fps=24, 
-                    show_vectors=True, show_trails=True, show_progress=True):
+def render_2d_video(traj, output_path, mode='spheres', fps=30,
+                    show_vectors=True, show_trails=True, show_progress=True, target_duration=None):
     '''
     Generate a 2D simulation MP4 video for spheres or multiblobs.
     Streams frames directly to disk to avoid buffering the entire video in RAM.
@@ -209,19 +209,22 @@ def render_2d_video(traj, output_path, mode='spheres', fps=24,
     '''
     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
 
+    frame_count = traj.num_frames
+    if target_duration is not None and traj.num_frames == 1:
+        frame_count = max(1, int(round(target_duration * fps)))
     if show_progress:
-        print(f"[*] Rendering {traj.num_frames} 2D frames (mode={mode})...")
+        print(f"[*] Rendering {frame_count} 2D frames (mode={mode})...")
 
     fig = plt.figure(figsize=(10, 10), dpi=100, facecolor='#0b0f19')
 
     # Bug 7: Stream frames directly to disk instead of buffering in RAM
     with VideoStreamWriter(output_path, fps=fps) as writer:
-        for i in range(traj.num_frames):
-            frame = render_2d_frame(traj, i, fig=fig, mode=mode,
+        for i in range(frame_count):
+            frame = render_2d_frame(traj, min(i, traj.num_frames-1), fig=fig, mode=mode,
                                     show_vectors=show_vectors, show_trails=show_trails)
             writer.write_frame(frame)
             if show_progress:
-                print(f"    Rendered 2D frame {i+1}/{traj.num_frames}", end='\r')
+                print(f"    Rendered 2D frame {i+1}/{frame_count}", end='\r')
 
     plt.close(fig)
     if show_progress:

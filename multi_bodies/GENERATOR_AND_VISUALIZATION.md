@@ -99,8 +99,13 @@ Both MP4 and HTML top views draw periodic image copies. MP4 trails split at boun
 jumps. The HTML side view supports blob and envelope geometry and periodic X copies;
 wall indicators are disabled for `no_wall`. A displayed envelope is not necessarily
 the physical or hydrodynamic surface. `--radius` overrides display size only.
-The animation keeps at least all original frames, so a short requested duration
-can produce a longer MP4 at the chosen FPS; the CLI prints the actual MP4 duration.
+Default playback is **20 seconds at 30 FPS** (600 video frames). Animation
+resamples the entire physical time range to the requested frame count, preserving
+both endpoints even when there are more saved frames than video frames. Raw
+analysis remains unchanged. Duration is rounded to the nearest whole video frame.
+A single saved frame produces a static video of the requested duration.
+`--no-interpolate` explicitly retains raw frames, so its MP4 duration is
+`number_of_saved_frames / fps`. Override the defaults with `--duration` and `--fps`.
 
 For inputs with several structures, select `--structure-index N` and the matching
 `--config` file. The loader does not silently apply the first geometry to another

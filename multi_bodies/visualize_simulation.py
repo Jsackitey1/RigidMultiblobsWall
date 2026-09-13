@@ -9,10 +9,10 @@ Usage:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode all
 
   # Generate only the Spheres video:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode spheres --duration 8.0 --fps 24
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode spheres --duration 20 --fps 30
 
   # Generate only the Multi-Blobs video:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode blobs --duration 8.0 --fps 24
+  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode blobs --duration 20 --fps 30
 
   # Generate only the Interactive 2D HTML player:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode html
@@ -48,10 +48,10 @@ def main():
                         help='Visualization mode: spheres, blobs, html, or all (default: all)')
     parser.add_argument('--radius', '-r', type=float, default=None,
                         help='Particle radius override (optional, auto-computed from vertex file by default)')
-    parser.add_argument('--duration', '-d', type=float, default=10.0,
-                        help='Target video and HTML playback duration in seconds (default: 10.0s)')
-    parser.add_argument('--fps', type=int, default=24,
-                        help='Video frame rate for smooth playback (default: 24 fps)')
+    parser.add_argument('--duration', '-d', type=float, default=20.0,
+                        help='Target video and HTML playback duration in seconds (default: 20.0s)')
+    parser.add_argument('--fps', type=int, default=30,
+                        help='Video frame rate for smooth playback (default: 30 fps)')
     parser.add_argument('--output-dir', '-o', type=str, default='data/visualizations',
                         help='Output directory for generated MP4 videos and HTML (default: data/visualizations)')
     parser.add_argument('--no-interpolate', action='store_true',
@@ -66,6 +66,8 @@ def main():
     parser.add_argument('--coordinates', choices=['unwrapped', 'wrapped'], default='unwrapped', help='Solver output convention; wrapped reconstruction assumes less than half-cell motion per interval')
     parser.add_argument('--diagnostic-plots', action='store_true', help='Add raw-frame X-Z/height plots and periodic projected g(r)')
     args = parser.parse_args()
+    if not np.isfinite(args.duration) or args.duration <= 0 or args.fps <= 0:
+        parser.error('--duration and --fps must be positive and finite')
 
     # Resolve config file path
     config_file = args.config
@@ -139,7 +141,7 @@ def main():
         print("\n--- 1. Generating 2D Spheres Suspension Video ---")
         spheres_path = os.path.join(args.output_dir, 'spheres_simulation.mp4')
         out_spheres = render_2d_video(traj, spheres_path, mode='spheres',
-                                      fps=args.fps, show_vectors=not args.no_vectors,
+                                      fps=args.fps, target_duration=args.duration if not args.no_interpolate else None, show_vectors=not args.no_vectors,
                                       show_trails=not args.no_trails)
         generated_all.extend(out_spheres)
 
@@ -148,7 +150,7 @@ def main():
         print("\n--- 2. Generating 2D Multi-Blobs Discretization Video ---")
         blobs_path = os.path.join(args.output_dir, 'multiblobs_simulation.mp4')
         out_blobs = render_2d_video(traj, blobs_path, mode='blobs',
-                                    fps=args.fps, show_vectors=False,
+                                    fps=args.fps, target_duration=args.duration if not args.no_interpolate else None, show_vectors=False,
                                     show_trails=not args.no_trails)
         generated_all.extend(out_blobs)
 
