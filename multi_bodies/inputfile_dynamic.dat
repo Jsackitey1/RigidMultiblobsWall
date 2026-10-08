@@ -10,8 +10,8 @@ blob_blob_force_implementation           numba
 
 # Set time step, number of steps and save frequency
 dt                                       0.01
-n_steps                                  2000
-n_save                                   10
+n_steps                                  50000
+n_save                                   1
 save_clones                              one_file
 time_unit                                nondimensional
 
