@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 '''
 Simulation Video Visualization Tool for RigidMultiblobsWall.
-Generates 2D MP4 videos (H.264 / yuv420p) and standalone interactive 2D HTML5 players.
+Generates 2D MP4 videos (H.264 / yuv420p).
 Works with any simulation run, any particle count, and any body radius.
 
 Usage:
-  # Generate both Spheres and Multi-Blobs MP4 videos + Interactive HTML player:
+  # Generate both Spheres and Multi-Blobs MP4 videos:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode all
 
   # Generate only the Spheres video:
@@ -14,8 +14,6 @@ Usage:
   # Generate only the Multi-Blobs video:
   python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode blobs --duration 20 --fps 30
 
-  # Generate only the Interactive 2D HTML player:
-  python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode html
 '''
 
 import os
@@ -32,11 +30,10 @@ if parent_dir not in sys.path:
 
 from visualizer.trajectory_loader import load_simulation_data
 from visualizer.render_2d import render_2d_video
-from visualizer.export_html import export_interactive_html
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Visualize RigidMultiblobsWall simulation in 2D MP4 video and HTML formats.')
+    parser = argparse.ArgumentParser(description='Visualize RigidMultiblobsWall simulation in 2D MP4 video format.')
     parser.add_argument('--config', '-c', type=str, default=None,
                         help='Path to simulation .config file (default: resolved from input-file or data/run.generated_spheres.config)')
     parser.add_argument('--input-file', '-i', type=str, default='inputfile_dynamic.dat',
@@ -44,18 +41,20 @@ def main():
     parser.add_argument('--vertex-file', '-v', type=str, default=None,
                         help='Path to body .vertex file (optional, auto-detected from input file)')
     parser.add_argument('--mode', '-m', type=str, default='all',
-                        choices=['spheres', 'blobs', 'html', 'interactive', 'all'],
-                        help='Visualization mode: spheres, blobs, html, or all (default: all)')
+                        choices=['spheres', 'blobs', 'all'],
+                        help='Visualization mode: spheres, blobs, or all (both MP4 views) (default: all)')
     parser.add_argument('--radius', '-r', type=float, default=None,
                         help='Particle radius override (optional, auto-computed from vertex file by default)')
     parser.add_argument('--duration', '-d', type=float, default=20.0,
-                        help='Target video and HTML playback duration in seconds (default: 20.0s)')
+                        help='Target video playback duration in seconds (default: 20.0s)')
     parser.add_argument('--fps', type=int, default=30,
                         help='Video frame rate for smooth playback (default: 30 fps)')
     parser.add_argument('--output-dir', '-o', type=str, default='data/visualizations',
-                        help='Output directory for generated MP4 videos and HTML (default: data/visualizations)')
+                        help='Output directory for generated MP4 videos (default: data/visualizations)')
     parser.add_argument('--no-interpolate', action='store_true',
                         help='Disable SLERP sub-frame interpolation and render raw simulation frames only')
+    parser.add_argument('--color-by', choices=['height', 'speed', 'vx', 'index'], default='height', help='MP4 particle coloring')
+    parser.add_argument('--trail-length', type=int, default=20, help='MP4 history length in rendered frames')
     parser.add_argument('--no-trails', action='store_true',
                         help='Disable trajectory motion trails')
     parser.add_argument('--no-vectors', action='store_true',
@@ -66,6 +65,8 @@ def main():
     parser.add_argument('--coordinates', choices=['unwrapped', 'wrapped'], default='unwrapped', help='Solver output convention; wrapped reconstruction assumes less than half-cell motion per interval')
     parser.add_argument('--diagnostic-plots', action='store_true', help='Add raw-frame X-Z/height plots and periodic projected g(r)')
     args = parser.parse_args()
+    if args.trail_length < 0:
+        parser.error('--trail-length must be nonnegative')
     if not np.isfinite(args.duration) or args.duration <= 0 or args.fps <= 0:
         parser.error('--duration and --fps must be positive and finite')
 
@@ -139,7 +140,7 @@ def main():
         spheres_path = os.path.join(args.output_dir, 'spheres_simulation.mp4')
         out_spheres = render_2d_video(traj, spheres_path, mode='spheres',
                                       fps=args.fps, target_duration=args.duration if not args.no_interpolate else None, show_vectors=not args.no_vectors,
-                                      show_trails=not args.no_trails)
+                                      show_trails=not args.no_trails, color_by=args.color_by, trail_length=args.trail_length)
         generated_all.extend(out_spheres)
 
     # 2. 2D Multi-Blobs Discretization Video
@@ -148,15 +149,8 @@ def main():
         blobs_path = os.path.join(args.output_dir, 'multiblobs_simulation.mp4')
         out_blobs = render_2d_video(traj, blobs_path, mode='blobs',
                                     fps=args.fps, target_duration=args.duration if not args.no_interpolate else None, show_vectors=False,
-                                    show_trails=not args.no_trails)
+                                    show_trails=not args.no_trails, color_by=args.color_by, trail_length=args.trail_length)
         generated_all.extend(out_blobs)
-
-    # 3. Standalone Interactive 2D HTML5 Player
-    if args.mode in ['html', 'interactive', 'all']:
-        print("\n--- 3. Generating Interactive 2D HTML5 Simulation Player ---")
-        html_path = os.path.join(args.output_dir, 'interactive_simulation_player.html')
-        out_html = export_interactive_html(traj, html_path, target_duration=args.duration)
-        generated_all.append(out_html)
 
     print("\n" + "=" * 70)
     print("All requested visualizations successfully generated!")

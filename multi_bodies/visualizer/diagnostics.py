@@ -29,6 +29,25 @@ def write_diagnostics(traj, output_dir, plots=False):
             minima = [float(raw.get_blobs_for_frame(i)[:, 2].min()-raw.blob_radius) for i in range(raw.num_frames)]
             report['minimum_blob_wall_clearance_by_frame'] = minima
             report['minimum_blob_wall_clearance'] = min(minima)
+    if 'reservoir_end' in raw.metadata:
+        interface = float(raw.metadata['reservoir_end'])
+        x = raw.positions_unwrapped[..., 0]
+        downstream = x >= interface
+        forward = np.count_nonzero(~downstream[:-1] & downstream[1:], axis=1)
+        backward = np.count_nonzero(downstream[:-1] & ~downstream[1:], axis=1)
+        edges = np.linspace(raw.domain_bounds[0], raw.domain_bounds[1], 41)
+        counts = np.array([np.histogram(row, edges)[0] for row in x])
+        report['transport'] = {
+            'interface_x': interface, 'downstream_definition': 'center x >= interface, including beyond viewing window',
+            'crossing_definition': 'saved-frame endpoint crossings; unresolved within-interval recrossings excluded',
+            'downstream_count': downstream.sum(axis=1).tolist(),
+            'forward_crossings': forward.tolist(), 'backward_crossings': backward.tolist(),
+            'net_flux_per_time': ((forward-backward)/np.diff(raw.time_array)).tolist(),
+            'density_bin_edges': edges.tolist(),
+            'number_per_unit_x': (counts/np.diff(edges)).tolist(),
+            'outside_x_window': ((x < edges[0]) | (x > edges[-1])).sum(axis=1).tolist(),
+            'body_count': raw.num_bodies,
+        }
     report_path = os.path.join(output_dir, 'validation.json')
     with open(report_path, 'w') as stream:
         json.dump(report, stream, indent=2, allow_nan=False)

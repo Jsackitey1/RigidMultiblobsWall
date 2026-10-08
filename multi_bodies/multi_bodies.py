@@ -59,6 +59,22 @@ while found_functions is False:
       sys.exit()
 
 
+def validate_shear_configuration(read):
+  """Only admit shear paths whose mobility and stochastic drift are consistent."""
+  if read.shear_rate == 0:
+    return
+  dense_brownian = read.scheme == 'stochastic_first_order_RFD_dense_algebra'
+  supported = read.scheme in ('deterministic_forward_euler', 'deterministic_adams_bashforth') or dense_brownian
+  if (read.domain != 'single_wall' or not supported or
+      read.periodic_length[2] != 0 or
+      read.mobility_blobs_implementation not in ('python', 'C++') or
+      read.mobility_vector_prod_implementation not in ('python', 'numba', 'pycuda', 'C++')):
+    raise ValueError('shear_rate requires a supported single-wall multiblob integrator and nonperiodic z')
+  # The dense mobility and its RFD evaluation do not take periodic lengths.
+  if dense_brownian and np.any(np.asarray(read.periodic_length) != 0):
+    raise ValueError('Brownian shear with dense algebra requires nonperiodic boundaries')
+
+
 class gmres_counter(object):
   '''
   Callback generator to count iterations. 
@@ -188,6 +204,8 @@ def calc_slip(bodies, Nblobs, *args, **kwargs):
     Dslip = mb.double_layer_source_target_numba(r_vectors, r_vectors, normals, slip, weights, wall=wall).reshape((Nblobs, 3))
     slip = 0.5 * slip + Dslip  
     
+  # M lambda - K U = slip - u_infinity; sample at every blob.
+  slip[:, 0] -= kwargs.get('shear_rate', 0.0) * r_vectors[:, 2]
   return slip
 
 
@@ -1138,6 +1156,8 @@ if __name__ == '__main__':
   plot_concentration_field = read.plot_concentration_field
   multi_bodies_functions.calc_body_body_forces_torques = multi_bodies_functions.set_body_body_forces_torques(read.body_body_force_torque_implementation)
 
+  validate_shear_configuration(read)
+
   # Copy input file to output
   # subprocess.call(["cp", input_file, output_name + '.inputfile'])
   copyfile(input_file,output_name + '.inputfile')
@@ -1344,6 +1364,7 @@ if __name__ == '__main__':
 
   integrator.n_save = n_save 
   integrator.calc_slip = partial(calc_slip,
+                                 shear_rate = read.shear_rate,
                                  implementation = read.mobility_vector_prod_implementation, 
                                  blob_radius = a, 
                                  eta = eta, 

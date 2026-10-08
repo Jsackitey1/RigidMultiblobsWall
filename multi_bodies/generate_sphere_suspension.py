@@ -307,19 +307,24 @@ def save_clones_file(filepath, positions, quaternions):
 
   os.replace(temporary, filepath)
 
-def plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_target, output_plot):
+def plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_target, output_plot, reservoir_end=None):
   '''Generate 2D top-down verification plot with circles drawn to true scale.'''
   if not has_matplotlib:
     print("[!] matplotlib is not installed. Skipping plot generation.")
     return
 
   N = len(positions)
-  fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
+  fig, ax = plt.subplots(figsize=(12, 4) if reservoir_end is not None else (8, 8), dpi=150)
   xmin, xmax, ymin, ymax = bounds[0], bounds[1], bounds[2], bounds[3]
   
   # Draw boundary box
-  ax.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], 'k--', lw=1.5, label='Domain Boundary')
+  ax.plot([xmin, xmax, xmax, xmin, xmin], [ymin, ymin, ymax, ymax, ymin], 'k--', lw=1.5, label='Observation window')
   
+  if reservoir_end is not None:
+    ax.axvline(reservoir_end, color='orange', linestyle='--', label='Initial reservoir edge')
+    ax.axvspan(xmin, reservoir_end, color='#2b7bba', alpha=.08)
+    ax.text((reservoir_end+xmax)/2, (ymin+ymax)/2, 'Initially particle-free fluid', ha='center')
+
   # Draw spheres
   for i in range(N):
     circle = Circle((positions[i, 0], positions[i, 1]), radius, facecolor='#2b7bba', edgecolor='#104e8b', alpha=0.75, lw=1.0)
@@ -332,6 +337,8 @@ def plot_suspension_2d(bounds, positions, radius, achieved_fraction, min_d, min_
   ax.set_ylabel('Y Position', fontsize=12)
   ax.set_title(f'2D Sphere Suspension (N = {N}, $\\phi_{{2D}} = {achieved_fraction:.3f}$)\n'
                f'Min Dist = {min_d:.3f} (Req >= {min_target:.3f})', fontsize=13)
+  if reservoir_end is not None:
+    ax.set_title(f'Initial reservoir: nominal area fraction {achieved_fraction:.3f} (placement slab)')
   ax.grid(True, linestyle=':', alpha=0.6)
   ax.legend(loc='upper right')
 
@@ -374,6 +381,7 @@ def main():
                       help="Path to a *.dat configuration file (e.g. inputfile_suspension.dat)")
   parser.add_argument('--box', nargs='+', type=float, default=None,
                       help="Bounding box: 'xmin xmax ymin ymax' or 'Lx Ly'")
+  parser.add_argument('--reservoir-end', type=float, help='Initial slab ends at this x; box remains the full observation window')
   parser.add_argument('--z-height', type=float, default=None,
                       help="Fixed height z above floor wall (default: 2.0 * radius)")
   parser.add_argument('--area-fraction', '--density', '--fraction', dest='fraction', type=float, default=None,
@@ -428,6 +436,16 @@ def main():
     bounds = [box_val[0], box_val[1], box_val[2], box_val[3]]
   else:
     sys.exit("Error: box must provide 2 numbers (Lx Ly) or 4 numbers (xmin xmax ymin ymax).")
+
+  if not np.isfinite(bounds).all() or bounds[1] <= bounds[0] or bounds[3] <= bounds[2]:
+    raise ValueError('Observation box must contain finite, increasing bounds')
+
+  reservoir_end = args.reservoir_end if args.reservoir_end is not None else float(file_opts['reservoir_end']) if 'reservoir_end' in file_opts else None
+  placement_bounds = list(bounds)
+  if reservoir_end is not None:
+    if not np.isfinite(reservoir_end) or not bounds[0] < reservoir_end < bounds[1]:
+      raise ValueError('reservoir_end must lie strictly inside the observation box')
+    placement_bounds[1] = reservoir_end
 
   # Resolve radius
   radius = args.radius
@@ -500,6 +518,11 @@ def main():
       if axes[axis] and not np.isclose(lengths[axis], bounds[2*axis+1]-bounds[2*axis]):
         raise ValueError('Placement box must match periodic_length on periodic axes')
 
+  if reservoir_end is not None:
+    axes = [periodic]*2 if isinstance(periodic, bool) else periodic
+    if axes[0]:
+      raise ValueError('Reservoir transport requires open x, not periodic x')
+
   # Resolve outputs
   output_clones = args.output_clones or file_opts.get('output_clones') or 'Structures/generated_spheres.clones'
   plot_image = args.plot_image or file_opts.get('plot_image') or 'data/spheres_plot.png'
@@ -537,7 +560,7 @@ def main():
 
   # Generate positions
   positions, quaternions, achieved_fraction, min_d, min_target = generate_sphere_suspension_2d(
-    bounds=bounds,
+    bounds=placement_bounds,
     target_count=num_bodies,
     target_fraction=fraction,
     radius=radius,
@@ -569,11 +592,14 @@ def main():
   axes = [periodic]*2 if isinstance(periodic, bool) else periodic
   lengths = [L if enabled else 0 for L, enabled in zip(lengths, axes)]
   report = geometry_report(positions, quaternions, vertices, blob_radius, lengths, wall) if vertices is not None and blob_radius is not None else {}
-  report.update({'placement_policy': geometry_mode, 'nominal_radius': radius,
+  report.update({'observation_bounds': bounds, 'placement_bounds': placement_bounds,
+                 'reservoir_end': reservoir_end,
+                 'initial_downstream_centers': int(np.count_nonzero(positions[:, 0] >= reservoir_end)) if reservoir_end is not None else None,
+                 'placement_policy': geometry_mode, 'nominal_radius': radius,
                  'bounding_radius': bounding_radius(vertices, blob_radius) if vertices is not None and blob_radius is not None else None,
                  'blob_radius': blob_radius, 'seed': seed, 'num_bodies': N,
                  'requested_area_fraction': fraction, 'achieved_nominal_area_fraction': achieved_fraction,
-                 'number_density': N / ((bounds[1]-bounds[0])*(bounds[3]-bounds[2])),
+                 'number_density': N / ((placement_bounds[1]-placement_bounds[0])*(placement_bounds[3]-placement_bounds[2])),
                  'minimum_center_distance': min_d if np.isfinite(min_d) else None,
                  'required_center_distance': min_target, 'status': 'valid_under_placement_policy'})
 
@@ -589,7 +615,7 @@ def main():
 
   # Plot image
   if plot_image:
-    plot_suspension_2d(bounds, positions, radius if geometry_mode == 'ideal-sphere' else bounding_radius(vertices, blob_radius), achieved_fraction, min_d, min_target, plot_image)
+    plot_suspension_2d(bounds, positions, radius if geometry_mode == 'ideal-sphere' else bounding_radius(vertices, blob_radius), achieved_fraction, min_d, min_target, plot_image, reservoir_end=reservoir_end)
 
   # Print inputfile snippet
   print("=" * 60)

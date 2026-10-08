@@ -3,14 +3,14 @@ scheme                                   deterministic_adams_bashforth
 
 # Select implementation to compute M and M*f
 mobility_blobs_implementation            python
-mobility_vector_prod_implementation      python
+mobility_vector_prod_implementation      pycuda
 
 # Select implementation to compute the blobs-blob interactions
-blob_blob_force_implementation           python
+blob_blob_force_implementation           pycuda
 
 # Set time step, number of steps and save frequency
 dt                                       0.1
-n_steps                                  10
+n_steps                                  10000
 n_save                                   1
 save_clones                              one_file
 

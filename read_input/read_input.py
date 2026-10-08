@@ -52,6 +52,9 @@ class ReadInput(object):
     self.dt = float(self.options.get('dt') or 0.0)
     self.eta = float(self.options.get('eta') or 1.0)
     self.g = float(self.options.get('g') or 1.0)
+    self.shear_rate = float(self.options.get('shear_rate') or 0.0)
+    if not np.isfinite(self.shear_rate):
+      raise ValueError('shear_rate must be finite')
     self.theta = float(self.options.get('tilt_angle') or 0.0)
     self.blob_radius = float(self.options.get('blob_radius') or 1.0)
     self.tracer_radius = float(self.options.get('tracer_radius') or 0.0)

@@ -95,9 +95,7 @@ raw source, regardless of animation FPS. The final displacement-rate value repea
 the last measured interval for display. Brownian displacement rates are finite-time
 measurements, not smooth instantaneous velocities.
 
-Both MP4 and HTML top views draw periodic image copies. MP4 trails split at boundary
-jumps. The HTML side view supports blob and envelope geometry and periodic X copies;
-wall indicators are disabled for `no_wall`. A displayed envelope is not necessarily
+MP4 top views draw periodic image copies, and trails split at boundary jumps. A displayed envelope is not necessarily
 the physical or hydrodynamic surface. `--radius` overrides display size only.
 Default playback is **20 seconds at 30 FPS** (600 video frames). Animation
 resamples the entire physical time range to the requested frame count, preserving
@@ -136,3 +134,19 @@ Tests cover periodic crossings, large unwrapped displacements, irregular times,
 restart offsets, raw/animation separation, generator failure, geometry and wall
 clearance, reproducibility, quaternion agreement with the solver, and rendering.
 They validate these additions, not the entire hydrodynamics solver.
+
+## Passive shear reservoir pilot
+
+For an end-to-end populated-reservoir to particle-free-region example, including
+zero-shear and timestep controls, see
+[the passive shear pilot](examples/passive_shear_reservoir/README.md).
+It uses `reservoir_end` to separate placement from observation bounds and applies
+`shear_rate` inside the rigid multiblob solve. MP4 options `--color-by vx` and
+`--trail-length 35` display downstream displacement rates and particle histories.
+
+## Brownian motion with imposed shear
+
+For a single particle with downstream drift, thermal translation and rotation,
+see [the Brownian shear example](examples/brownian_shear/README.md).
+The supported stochastic shear path is the dense first-order RFD integrator
+with nonperiodic boundaries.

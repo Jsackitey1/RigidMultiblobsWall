@@ -43,3 +43,9 @@ data/*
 
 
 
+
+# Generated simulation data (run folders, videos, validation reports)
+# Keeps the tracked multi_bodies/data/README and multi_bodies/data/run.git
+multi_bodies/data/*/
+*.mp4
+*.validation.json

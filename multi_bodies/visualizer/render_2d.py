@@ -83,7 +83,14 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
             ax.plot(trail[:, 0], trail[:, 1], color='#38bdf8', alpha=0.35, linewidth=1.2, zorder=2)
 
     # --- Color Mapping ---
-    if color_by == 'speed':
+    if color_by == 'vx':
+        c_vals = traj.displacement_rate[frame_idx, :, 0]
+        values = traj.displacement_rate[..., 0]
+        lo, hi = float(values.min()), float(values.max())
+        cmap = 'plasma'
+        c_label = 'Downstream displacement / saved time interval'
+        norm = plt.Normalize(vmin=lo, vmax=max(hi, lo+1e-8))
+    elif color_by == 'speed':
         max_speed = max(np.max(traj.speeds), 0.01)
         c_vals = speeds
         cmap = 'plasma'
@@ -166,6 +173,16 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     cbar.set_label(c_label, color='#e2e8f0', fontsize=10)
     cbar.ax.tick_params(colors='#e2e8f0', labelsize=8)
 
+    if 'reservoir_end' in traj.metadata:
+        interface = float(traj.metadata['reservoir_end'])
+        ax.axvspan(xmin, interface, color='#38bdf8', alpha=.06, zorder=0)
+        ax.axvline(interface, color='#fbbf24', linestyle='--', linewidth=1.5)
+        ax.text((xmin+interface)/2, ymax, 'Initial reservoir', ha='center', va='bottom', color='#e2e8f0')
+        ax.text((interface+xmax)/2, ymax, 'Initially particle-free fluid', ha='center', va='bottom', color='#e2e8f0')
+        downstream = int(np.count_nonzero(traj.positions_unwrapped[frame_idx, :, 0] >= interface))
+        ax.text(.02, .03, f'Downstream centers: {downstream}/{traj.num_bodies}   |   shear →   |   no-slip floor z=0',
+                transform=ax.transAxes, color='#e2e8f0', fontsize=9)
+
     # Axis and Domain Formatting
     pad = R * 1.5
     ax.set_xlim(xmin if traj.periodic_lengths[0] else xmin-pad, xmax if traj.periodic_lengths[0] else xmax+pad)
@@ -180,7 +197,7 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
 
     mode_title = f"2D Body Envelopes (Display radius R={R:.2f})" if mode == 'spheres' else f"2D Constituent Multi-Blobs (Blob Radius a={traj.blob_radius:.2f})"
     title = (f"{mode_title}\n"
-             f"Time: {t_curr:.3f} s  |  Frame: {frame_idx + 1}/{traj.num_frames}  |  "
+             f"Time: {t_curr:.3f} {traj.metadata.get('time_unit', 's')}  |  Frame: {frame_idx + 1}/{traj.num_frames}  |  "
              f"Bodies: {traj.num_bodies}  |  Mean $\\langle z \\rangle$: {traj.mean_z[frame_idx]:.4f}")
     ax.set_title(title, color=text_color, fontsize=12, fontweight='bold', pad=10)
 
@@ -191,7 +208,7 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
 
 
 def render_2d_video(traj, output_path, mode='spheres', fps=30,
-                    show_vectors=True, show_trails=True, show_progress=True, target_duration=None):
+                    show_vectors=True, show_trails=True, show_progress=True, target_duration=None, color_by='height', trail_length=20):
     '''
     Generate a 2D simulation MP4 video for spheres or multiblobs.
     Streams frames directly to disk to avoid buffering the entire video in RAM.
@@ -215,13 +232,13 @@ def render_2d_video(traj, output_path, mode='spheres', fps=30,
     if show_progress:
         print(f"[*] Rendering {frame_count} 2D frames (mode={mode})...")
 
-    fig = plt.figure(figsize=(10, 10), dpi=100, facecolor='#0b0f19')
+    fig = plt.figure(figsize=(14, 5) if 'reservoir_end' in traj.metadata else (10, 10), dpi=100, facecolor='#0b0f19')
 
     # Bug 7: Stream frames directly to disk instead of buffering in RAM
     with VideoStreamWriter(output_path, fps=fps) as writer:
         for i in range(frame_count):
             frame = render_2d_frame(traj, min(i, traj.num_frames-1), fig=fig, mode=mode,
-                                    show_vectors=show_vectors, show_trails=show_trails)
+                                    show_vectors=show_vectors, show_trails=show_trails, color_by=color_by, trail_length=trail_length)
             writer.write_frame(frame)
             if show_progress:
                 print(f"    Rendered 2D frame {i+1}/{frame_count}", end='\r')

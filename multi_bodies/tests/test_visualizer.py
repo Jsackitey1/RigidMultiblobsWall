@@ -30,7 +30,6 @@ from visualizer.render_2d import (
     render_2d_frame,
     render_2d_video
 )
-from visualizer.export_html import export_interactive_html
 
 
 class TestQuaternionMath(unittest.TestCase):
@@ -297,42 +296,6 @@ class TestTrajectoryInterpolation(unittest.TestCase):
         self.assertEqual(interp_traj.num_bodies, raw_traj.num_bodies)
         self.assertAlmostEqual(interp_traj.time_array[0], raw_traj.time_array[0])
         self.assertAlmostEqual(interp_traj.time_array[-1], raw_traj.time_array[-1])
-
-
-class TestHTMLExport(unittest.TestCase):
-    '''Test HTML player export.'''
-
-    @unittest.skipUnless(
-        os.path.exists(os.path.join(mb_dir, 'data', 'run.generated_spheres.config'))
-        and os.path.exists(os.path.join(mb_dir, 'inputfile_dynamic.dat')),
-        'Simulation data not found'
-    )
-    def test_html_export_contains_viridis_lut(self):
-        '''Exported HTML should contain the viridis LUT, not the polynomial approximation.'''
-        config_path = os.path.join(mb_dir, 'data', 'run.generated_spheres.config')
-        input_path = os.path.join(mb_dir, 'inputfile_dynamic.dat')
-        traj = load_simulation_data(config_path, input_file=input_path)
-
-        with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as f:
-            tmp_html = f.name
-        try:
-            export_interactive_html(traj, tmp_html)
-            self.assertTrue(os.path.exists(tmp_html))
-            with open(tmp_html, 'r') as f:
-                html_content = f.read()
-            self.assertGreater(len(html_content), 1000)
-            # Bug 5: Should contain viridis LUT, not polynomial
-            self.assertIn('viridis_lut', html_content)
-            # Bug 4: Should have dynamic z_min/z_max
-            self.assertIn('z_min', html_content)
-            self.assertIn('z_max', html_content)
-            # Minor: No LaTeX in HTML
-            self.assertNotIn('$\\langle', html_content)
-            # Minor: No dead velocities payload
-            self.assertNotIn('"velocities"', html_content)
-        finally:
-            if os.path.exists(tmp_html):
-                os.unlink(tmp_html)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,35 @@
+# Dimensionless pilot; run from multi_bodies/. Not a calibrated experiment.
+box 0 64 0 16
+reservoir_end 16
+periodic_length 0 16 0
+z_height 2.5
+radius 1
+area_fraction 0.15
+safety_gap 0.1
+seed 42
+vertex_file Structures/shell_N_12_Rg_1.vertex
+blob_radius 0.25
+geometry_mode bounding-sphere
+output_clones data/passive_shear/reservoir.clones
+plot_image data/passive_shear/initial.png
+structure Structures/shell_N_12_Rg_1.vertex data/passive_shear/reservoir.clones
+scheme deterministic_adams_bashforth
+mobility_blobs_implementation python
+mobility_vector_prod_implementation numba
+blob_blob_force_implementation numba
+shear_rate 0.5
+dt 0.02
+n_steps 1200
+n_save 10
+save_clones one_file
+eta 1
+g 0.01
+kT 0
+repulsion_strength 0.1
+debye_length 0.1
+repulsion_strength_wall 0.1
+debye_length_wall 0.5
+solver_tolerance 1e-8
+output_name data/passive_shear/run
+domain single_wall
+time_unit nondimensional
