@@ -3,11 +3,31 @@
 Run these commands from `multi_bodies/` with NumPy and Matplotlib installed.
 Video export also needs the encoder dependencies described by `visualizer/video_writer.py`.
 
+The main shear + Brownian workflow uses one shared input file for all stages:
+
 ```sh
-python3 generate_sphere_suspension.py --input-file inputfile_suspension.dat --seed 42
-python3 multi_bodies.py --input-file inputfile_dynamic.dat
-python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode all --diagnostic-plots
+python3 generate_sphere_suspension.py --input-file inputfile_brownian_shear.dat
+python3 multi_bodies.py --input-file inputfile_brownian_shear.dat
+python3 visualize_simulation.py --input-file inputfile_brownian_shear.dat --mode spheres --no-interpolate --fps 20 --no-vectors --trail-length 200 --output-dir data/shear_brownian/video
 ```
+
+The resulting top-view video is `data/shear_brownian/video/spheres_simulation.mp4`.
+Edit `num_bodies` in `inputfile_brownian_shear.dat` to change particle count, then
+repeat all three commands. This configuration generates ten randomly placed,
+initially separated particles at z=4 in an upstream slab (x=0–12), then runs
+2,000 steps with dt=0.01, shear_rate=0.35 and kT=1. Saved orientations include
+flow-driven rotation and rotational Brownian motion. Translational Brownian
+motion is included in the saved positions. Parameters are nondimensional.
+The larger viewing box does not create side walls. Reruns overwrite this
+configuration's outputs. Dense algebra is intended for small systems and becomes
+expensive as particle count grows; this path uses CPU and nonperiodic boundaries.
+Initial geometric separation does not enforce collision-free dynamics: the
+existing soft repulsion remains in use.
+
+The earlier deterministic configuration remains available through
+`inputfile_suspension.dat` (generation) and `inputfile_dynamic.dat` (simulation
+and visualization). The example scripts are optional; the shared input above
+runs directly through the main programs.
 
 The generator writes a `.clones` file, an initial XY plot, and
 `<output-clones>.validation.json`. Existing simulation output is not regenerated
@@ -146,7 +166,8 @@ It uses `reservoir_end` to separate placement from observation bounds and applie
 
 ## Brownian motion with imposed shear
 
-For a single particle with downstream drift, thermal translation and rotation,
-see [the Brownian shear example](examples/brownian_shear/README.md).
+Use `inputfile_brownian_shear.dat` with the three main commands above for
+downstream drift, thermal translation and rotation. For a smaller isolated
+example, see [the Brownian shear example](examples/brownian_shear/README.md).
 The supported stochastic shear path is the dense first-order RFD integrator
 with nonperiodic boundaries.

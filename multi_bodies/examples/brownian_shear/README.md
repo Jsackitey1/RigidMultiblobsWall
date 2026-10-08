@@ -8,10 +8,8 @@ python3 multi_bodies/examples/brownian_shear/run_demo.py
 
 This runs the existing dense first-order RFD Brownian integrator with background
 shear and writes `multi_bodies/data/brownian_shear/combined_motion.mp4`.
-Rerunning overwrites this example's output only. The two views show the same
-saved 3D trajectory, without animation interpolation. Yellow lines project a
+Rerunning overwrites this example's output only. The top view shows the saved 3D trajectory projected onto X–Y, without animation interpolation. Yellow lines project a
 body-fixed axis using the saved quaternions; their projected length can change.
-Gray arrows indicate imposed shear, not the particle-disturbed fluid field.
 The 201 saved frames play at 20 FPS (10.05 seconds), representing 20 nondimensional
 time units. Frame times in the renderer assume the supplied dt=.01, n_save=10.
 
@@ -33,3 +31,17 @@ Tests verify the combined one-step shear response against an independent saddle
 solve, zero-temperature behavior, translational/rotational noise covariance,
 and rejected unsupported configurations. These are implementation checks, not
 physical calibration or timestep/spatial convergence of a research experiment.
+
+## Ten particles
+
+```sh
+python3 multi_bodies/examples/brownian_shear/run_demo.py --particles 10
+```
+
+This uses the same solver parameters and duration, with ten hydrodynamically
+interacting particles (120 blobs total). Five start at z=4 and five at z=8,
+with separated centers. The height difference makes the shear velocity
+difference visible. Outputs, including the generated input and initial clones,
+are saved separately in `multi_bodies/data/brownian_shear_10/`.
+`combined_motion.mp4` shows the top view with a color per particle;
+particles may overlap in projection. Rerunning overwrites that run's outputs.
