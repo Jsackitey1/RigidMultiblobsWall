@@ -55,7 +55,7 @@ For usage see **doc/README.md**.
 For automated initial conditions, MP4 visualization, and geometry diagnostics,
 see [Generator and visualization guide](multi_bodies/GENERATOR_AND_VISUALIZATION.md).
 The main shear + Brownian workflow uses
-[`multi_bodies/inputfile_brownian_shear.dat`](multi_bodies/inputfile_brownian_shear.dat)
+[`multi_bodies/inputfile_dynamic.dat`](multi_bodies/inputfile_dynamic.dat)
 for particle generation, simulation, and top-view video export. The guide includes
 the three commands; no demo runner is required.
 

@@ -6,13 +6,13 @@ Video export also needs the encoder dependencies described by `visualizer/video_
 The main shear + Brownian workflow uses one shared input file for all stages:
 
 ```sh
-python3 generate_sphere_suspension.py --input-file inputfile_brownian_shear.dat
-python3 multi_bodies.py --input-file inputfile_brownian_shear.dat
-python3 visualize_simulation.py --input-file inputfile_brownian_shear.dat --mode spheres --no-interpolate --fps 20 --no-vectors --trail-length 200 --output-dir data/shear_brownian/video
+python3 generate_sphere_suspension.py --input-file inputfile_dynamic.dat
+python3 multi_bodies.py --input-file inputfile_dynamic.dat
+python3 visualize_simulation.py --input-file inputfile_dynamic.dat --mode spheres --no-interpolate --fps 20 --no-vectors --trail-length 200 --output-dir data/shear_brownian/video
 ```
 
 The resulting top-view video is `data/shear_brownian/video/spheres_simulation.mp4`.
-Edit `num_bodies` in `inputfile_brownian_shear.dat` to change particle count, then
+Edit `num_bodies` in `inputfile_dynamic.dat` to change particle count, then
 repeat all three commands. This configuration generates ten randomly placed,
 initially separated particles at z=4 in an upstream slab (x=0–12), then runs
 2,000 steps with dt=0.01, shear_rate=0.35 and kT=1. Saved orientations include
@@ -24,10 +24,14 @@ expensive as particle count grows; this path uses CPU and nonperiodic boundaries
 Initial geometric separation does not enforce collision-free dynamics: the
 existing soft repulsion remains in use.
 
-The earlier deterministic configuration remains available through
-`inputfile_suspension.dat` (generation) and `inputfile_dynamic.dat` (simulation
-and visualization). The example scripts are optional; the shared input above
-runs directly through the main programs.
+Use only `inputfile_dynamic.dat` for this workflow. Set `num_bodies` for
+particle generation; set `n_steps`, `dt`, and `n_save` for simulation length
+and saved-frame spacing. Set `shear_rate` and `kT` for the imposed flow and
+thermal fluctuations. All three commands read this same file. The separate
+`inputfile_brownian_shear.dat` and `inputfile_suspension.dat` have been retired.
+After changing simulation settings, rerun the solver before rendering so the
+visualizer's timing agrees with the saved trajectory. After changing particle
+count or initial placement, rerun generation first as well.
 
 The generator writes a `.clones` file, an initial XY plot, and
 `<output-clones>.validation.json`. Existing simulation output is not regenerated
@@ -166,7 +170,7 @@ It uses `reservoir_end` to separate placement from observation bounds and applie
 
 ## Brownian motion with imposed shear
 
-Use `inputfile_brownian_shear.dat` with the three main commands above for
+Use `inputfile_dynamic.dat` with the three main commands above for
 downstream drift, thermal translation and rotation. For a smaller isolated
 example, see [the Brownian shear example](examples/brownian_shear/README.md).
 The supported stochastic shear path is the dense first-order RFD integrator

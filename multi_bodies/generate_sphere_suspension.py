@@ -378,7 +378,7 @@ def main():
     description="Generate non-overlapping 2D sphere suspensions for RigidMultiblobsWall."
   )
   parser.add_argument('--input-file', type=str, default=None,
-                      help="Path to a *.dat configuration file (e.g. inputfile_suspension.dat)")
+                      help="Path to a *.dat configuration file (e.g. inputfile_dynamic.dat)")
   parser.add_argument('--box', nargs='+', type=float, default=None,
                       help="Bounding box: 'xmin xmax ymin ymax' or 'Lx Ly'")
   parser.add_argument('--reservoir-end', type=float, help='Initial slab ends at this x; box remains the full observation window')

@@ -1,35 +1,61 @@
-# Select integrator 
-scheme                                   deterministic_adams_bashforth
+# Select integrator
+scheme                                   stochastic_first_order_RFD_dense_algebra
 
 # Select implementation to compute M and M*f
 mobility_blobs_implementation            python
-mobility_vector_prod_implementation      pycuda
+mobility_vector_prod_implementation      numba
 
 # Select implementation to compute the blobs-blob interactions
-blob_blob_force_implementation           pycuda
+blob_blob_force_implementation           numba
 
 # Set time step, number of steps and save frequency
-dt                                       0.1
-n_steps                                  10000
-n_save                                   1
+dt                                       0.01
+n_steps                                  2000
+n_save                                   10
 save_clones                              one_file
+time_unit                                nondimensional
 
 # Set fluid viscosity (eta), gravity (g) and blob radius
-eta                                      1.0 
-g                                        1.0
+eta                                      1
+g                                        0.01
 blob_radius                              0.25
 
-# Set parameters for the blob-blob interation
-repulsion_strength                       1.0
-debye_length                             1.0
+# Set imposed shear and Brownian motion (nondimensional parameters)
+shear_rate                               0.35
+kT                                       1
+seed                                     42
+rf_delta                                 1e-6
+solver_tolerance                         1e-8
+
+# Set parameters for the blob-blob interaction
+repulsion_strength                       0.1
+debye_length                             0.1
 
 # Set interaction with the wall
-repulsion_strength_wall                  1.0
-debye_length_wall                        1.0
+repulsion_strength_wall                  1
+debye_length_wall                        0.5
+
+# Set domain and boundary conditions
+domain                                   single_wall
+periodic_length                          0 0 0
+box                                      0 60 -12 12
+
+# Set initial particle placement for the generator
+reservoir_end                            12
+num_bodies                               10
+z_height                                 4
+radius                                   1
+safety_gap                               0.05
+geometry_mode                            bounding-sphere
+vertex_file                              Structures/shell_N_12_Rg_1.vertex
+
+# Set generator output files
+output_clones                            data/shear_brownian/generated_spheres.clones
+plot_image                               data/shear_brownian/initial_particles.png
 
 # Set output name
-output_name                              data/run
+output_name                              data/shear_brownian/run
 
 # Load rigid bodies configuration, provide
 # *.vertex and *.clones files
-structure Structures/shell_N_12_Rg_1.vertex Structures/generated_spheres.clones
+structure                                Structures/shell_N_12_Rg_1.vertex data/shear_brownian/generated_spheres.clones
