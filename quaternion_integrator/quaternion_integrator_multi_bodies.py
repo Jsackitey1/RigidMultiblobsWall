@@ -668,6 +668,8 @@ class QuaternionIntegrator(object):
                                                                                                         update_PC = self.update_PC,
                                                                                                         step = kwargs.get('step'))
 
+      # An explicit RHS excludes background shear from the auxiliary RFD solve.
+      # Shear belongs only in the physical solve below, at the restored configuration.
       # Generate RFD increments
       sol_precond = self.solve_mobility_problem(RHS = RAND_RHS, PC_partial = PC_partial)
       U_RFD = np.reshape(sol_precond[3*self.Nblobs: 3*self.Nblobs + 6*len(self.bodies)], (len(self.bodies) * 6))
@@ -706,6 +708,8 @@ class QuaternionIntegrator(object):
                                                                      mobility_mult = mobility_pc_partial,
                                                                      L_mult = P_inv_mult,
                                                                      print_residual = self.print_residual)
+      if it_lanczos >= 1000:
+        raise RuntimeError("Traction EM Lanczos reached its iteration limit")
       self.stoch_iterations_count += it_lanczos
 
       rand_slip = slip_noise + (1.0 / self.rf_delta) * (DxM - DxK)
@@ -1524,6 +1528,8 @@ class QuaternionIntegrator(object):
       counter = gmres_counter(print_residual = self.print_residual)
       (sol_precond, info_precond) = utils.gmres(A, RHS, x0=x0, tol=self.tolerance, M=PC, maxiter=1000, restart=60, callback=counter)
       self.det_iterations_count += counter.niter
+      if info_precond != 0:
+        raise RuntimeError('Rigid mobility GMRES failed to converge (info=%s)' % info_precond)
       # (sol_precond, infos, resnorms) = gmres.gmres(A, RHS, x0=x0, tol=self.tolerance, M=PC, maxiter=1000, restart=60, verbose=self.print_residual, convergence='presid')
       # self.det_iterations_count += len(resnorms)
     else:

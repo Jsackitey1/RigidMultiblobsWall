@@ -173,5 +173,7 @@ It uses `reservoir_end` to separate placement from observation bounds and applie
 Use `inputfile_dynamic.dat` with the three main commands above for
 downstream drift, thermal translation and rotation. For a smaller isolated
 example, see [the Brownian shear example](examples/brownian_shear/README.md).
-The supported stochastic shear path is the dense first-order RFD integrator
-with nonperiodic boundaries.
+Supported stochastic shear paths are the dense first-order RFD reference and
+iterative `stochastic_traction_EM`, both restricted here to nonperiodic boundaries.
+See [iterative CPU/GPU validation and benchmarks](benchmarks/README.md) before
+selecting the iterative path for a large production run.

@@ -66,6 +66,12 @@ class BrownianShear(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'nonperiodic'):
             solver.validate_shear_configuration(config)
         config.periodic_length = [0,0,0]
+        config.scheme = 'stochastic_traction_EM'
+        solver.validate_shear_configuration(config)
+        config.periodic_length = [16,0,0]
+        with self.assertRaisesRegex(ValueError, 'nonperiodic'):
+            solver.validate_shear_configuration(config)
+        config.periodic_length = [0,0,0]
         config.scheme = 'stochastic_EM'
         with self.assertRaises(ValueError):
             solver.validate_shear_configuration(config)

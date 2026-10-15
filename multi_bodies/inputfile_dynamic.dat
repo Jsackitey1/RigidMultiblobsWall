@@ -38,11 +38,11 @@ debye_length_wall                        0.5
 # Set domain and boundary conditions
 domain                                   single_wall
 periodic_length                          0 0 0
-box                                      0 60 -12 12
+box                                      0 300 -50 50
 
 # Set initial particle placement for the generator
-reservoir_end                            12
-num_bodies                               10
+reservoir_end                            60
+num_bodies                               500
 z_height                                 4
 radius                                   1
 safety_gap                               0.05

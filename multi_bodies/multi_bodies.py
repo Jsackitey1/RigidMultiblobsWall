@@ -64,15 +64,17 @@ def validate_shear_configuration(read):
   if read.shear_rate == 0:
     return
   dense_brownian = read.scheme == 'stochastic_first_order_RFD_dense_algebra'
-  supported = read.scheme in ('deterministic_forward_euler', 'deterministic_adams_bashforth') or dense_brownian
+  iterative_brownian = read.scheme == 'stochastic_traction_EM'
+  supported = read.scheme in ('deterministic_forward_euler', 'deterministic_adams_bashforth') or dense_brownian or iterative_brownian
   if (read.domain != 'single_wall' or not supported or
       read.periodic_length[2] != 0 or
       read.mobility_blobs_implementation not in ('python', 'C++') or
       read.mobility_vector_prod_implementation not in ('python', 'numba', 'pycuda', 'C++')):
     raise ValueError('shear_rate requires a supported single-wall multiblob integrator and nonperiodic z')
-  # The dense mobility and its RFD evaluation do not take periodic lengths.
-  if dense_brownian and np.any(np.asarray(read.periodic_length) != 0):
-    raise ValueError('Brownian shear with dense algebra requires nonperiodic boundaries')
+  # Dense RFD does not implement periodic images; traction shear is validated
+  # here only for nonperiodic single-wall systems.
+  if (dense_brownian or iterative_brownian) and np.any(np.asarray(read.periodic_length) != 0):
+    raise ValueError('Brownian shear requires nonperiodic boundaries')
 
 
 class gmres_counter(object):
