@@ -58,6 +58,14 @@ class PassiveShear(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     generator.main()
 
+    def test_reservoir_guard_rejects_full_box_and_boundary_crossing(self):
+        for x in (100., 59., .5):
+            with self.assertRaisesRegex(ValueError, 'outside reservoir'):
+                generator.validate_reservoir_placement(np.array([[x,0,4]]), [0,300,-50,50], 60, 1.25)
+        report = generator.validate_reservoir_placement(np.array([[1.25,0,4],[58.75,0,4]]), [0,300,-50,50], 60, 1.25)
+        self.assertTrue(report['reservoir_placement_verified'])
+        self.assertEqual(report['initial_downstream_centers'], 0)
+
     def test_crossings_include_recrossing_and_outside_window(self):
         positions = np.zeros((3, 2, 3))
         positions[..., 0] = [[1, 2], [6, 3], [4, 12]]

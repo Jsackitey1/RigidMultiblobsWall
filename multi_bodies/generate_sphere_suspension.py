@@ -284,6 +284,19 @@ def generate_sphere_suspension_2d(bounds, target_count=None, target_fraction=Non
   return full_coords, quaternions, achieved_fraction, min_d_observed, min_dist
 
 
+def validate_reservoir_placement(positions, bounds, reservoir_end, envelope_radius):
+  """Fail before writing if any initial particle envelope leaves the x slab."""
+  x = np.asarray(positions)[:, 0]
+  if (not np.isfinite(x).all() or
+      np.any(x - envelope_radius < bounds[0] - 1e-10) or
+      np.any(x + envelope_radius > reservoir_end + 1e-10)):
+    raise ValueError('Initial particle envelope outside reservoir; no configuration saved')
+  return {'initial_downstream_centers': int(np.count_nonzero(x >= reservoir_end)),
+          'initial_min_x': float(x.min()), 'initial_max_x': float(x.max()),
+          'initial_max_envelope_x': float((x + envelope_radius).max()),
+          'reservoir_placement_verified': True}
+
+
 def save_clones_file(filepath, positions, quaternions):
   '''Write positions and quaternions to *.clones file.'''
   N = len(positions)
@@ -602,6 +615,13 @@ def main():
                  'number_density': N / ((placement_bounds[1]-placement_bounds[0])*(placement_bounds[3]-placement_bounds[2])),
                  'minimum_center_distance': min_d if np.isfinite(min_d) else None,
                  'required_center_distance': min_target, 'status': 'valid_under_placement_policy'})
+
+  if reservoir_end is not None:
+    envelope_radius = radius if geometry_mode == 'ideal-sphere' else bounding_radius(vertices, blob_radius)
+    report.update(validate_reservoir_placement(positions, bounds, reservoir_end, envelope_radius))
+    print(f"[VERIFIED] Reservoir x = {bounds[0]} to {reservoir_end}; "
+          f"center x range = {report['initial_min_x']:.6f} to {report['initial_max_x']:.6f}; "
+          f"downstream centers = {report['initial_downstream_centers']}")
 
   # Save clones file
   save_clones_file(output_clones, positions, quaternions)
