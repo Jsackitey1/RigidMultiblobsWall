@@ -44,12 +44,13 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
         Colormapping criterion: 'height' (z-coord), 'speed' (|v|), or 'index'.
     '''
     if fig is None:
-        fig = plt.figure(figsize=(10, 10), dpi=100, facecolor='#0b0f19')
+        fig = plt.figure(figsize=(14, 6) if 'reservoir_end' in traj.metadata else (10, 10), dpi=100, facecolor='#0b0f19')
     else:
         fig.clf()
 
     fig.patch.set_facecolor('#0b0f19')
-    ax = fig.add_subplot(111, facecolor='#111827')
+    # Explicit axes avoid tight_layout margins accumulating across reused frames.
+    ax = fig.add_axes([0.075, 0.14, 0.82, 0.67], facecolor='#111827')
 
     t_curr = traj.time_array[frame_idx]
     pos = traj.positions[frame_idx]           # (N, 3)
@@ -169,7 +170,8 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     # Colorbar
     sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
     sm.set_array([])
-    cbar = fig.colorbar(sm, ax=ax, fraction=0.04, pad=0.03)
+    cax = fig.add_axes([0.92, 0.14, 0.015, 0.67])
+    cbar = fig.colorbar(sm, cax=cax)
     cbar.set_label(c_label, color='#e2e8f0', fontsize=10)
     cbar.ax.tick_params(colors='#e2e8f0', labelsize=8)
 
@@ -180,14 +182,14 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
         ax.text((xmin+interface)/2, ymax, 'Initial reservoir', ha='center', va='bottom', color='#e2e8f0')
         ax.text((interface+xmax)/2, ymax, 'Initially particle-free fluid', ha='center', va='bottom', color='#e2e8f0')
         downstream = int(np.count_nonzero(traj.positions_unwrapped[frame_idx, :, 0] >= interface))
-        ax.text(.02, .03, f'Downstream centers: {downstream}/{traj.num_bodies}   |   shear →   |   no-slip floor z=0',
-                transform=ax.transAxes, color='#e2e8f0', fontsize=9)
+        fig.text(.075, .025, f'Downstream centers: {downstream}/{traj.num_bodies}   |   shear →   |   no-slip floor z=0',
+                 color='#e2e8f0', fontsize=9)
 
     # Axis and Domain Formatting
     pad = R * 1.5
     ax.set_xlim(xmin if traj.periodic_lengths[0] else xmin-pad, xmax if traj.periodic_lengths[0] else xmax+pad)
     ax.set_ylim(ymin if traj.periodic_lengths[1] else ymin-pad, ymax if traj.periodic_lengths[1] else ymax+pad)
-    ax.set_aspect('equal', adjustable='box')
+    ax.set_aspect('equal', adjustable='box', anchor='W')
     ax.grid(True, linestyle='--', color='#1f2937', alpha=0.6)
 
     text_color = '#e2e8f0'
@@ -199,9 +201,7 @@ def render_2d_frame(traj, frame_idx, fig=None, mode='spheres', show_vectors=True
     title = (f"{mode_title}\n"
              f"Time: {t_curr:.3f} {traj.metadata.get('time_unit', 's')}  |  Frame: {frame_idx + 1}/{traj.num_frames}  |  "
              f"Bodies: {traj.num_bodies}  |  Mean $\\langle z \\rangle$: {traj.mean_z[frame_idx]:.4f}")
-    ax.set_title(title, color=text_color, fontsize=12, fontweight='bold', pad=10)
-
-    fig.tight_layout()
+    fig.suptitle(title, x=0.5, y=0.97, color=text_color, fontsize=12, fontweight='bold')
     fig.canvas.draw()
     rgba = np.asarray(fig.canvas.buffer_rgba())
     return rgba[:, :, :3].copy()
@@ -232,7 +232,7 @@ def render_2d_video(traj, output_path, mode='spheres', fps=30,
     if show_progress:
         print(f"[*] Rendering {frame_count} 2D frames (mode={mode})...")
 
-    fig = plt.figure(figsize=(14, 5) if 'reservoir_end' in traj.metadata else (10, 10), dpi=100, facecolor='#0b0f19')
+    fig = plt.figure(figsize=(14, 6) if 'reservoir_end' in traj.metadata else (10, 10), dpi=100, facecolor='#0b0f19')
 
     # Bug 7: Stream frames directly to disk instead of buffering in RAM
     with VideoStreamWriter(output_path, fps=fps) as writer:
